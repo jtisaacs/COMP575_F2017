@@ -121,12 +121,20 @@ void targetDetect(const sensor_msgs::ImageConstPtr& rawImage) {
     //Check result for valid tag
     if (zarray_size(detections) > 0) {
 	    apriltag_detection_t *det;
-	    zarray_get(detections, 0, &det); //use the first tag detected in the image
-	    tagDetected.tags.data.push_back(det->id);
-	    tagDetected.image = *rawImage;
+            for (int tag_id = 0; tag_id < zarray_size(detections); tag_id++) {
+                zarray_get(detections, tag_id, &det); //use the first tag detected in the image
+                tagDetected.tags.data.push_back(det->id);
+                tagDetected.image = *rawImage;
 
-	    //Publish detected tag
-	    tagPublish.publish(tagDetected);
+                //Publish detected tag
+                tagPublish.publish(tagDetected);
+            }
+//          zarray_get(detections, 0, &det); //use the first tag detected in the image
+//	    tagDetected.tags.data.push_back(det->id);
+//	    tagDetected.image = *rawImage;
+
+//	    //Publish detected tag
+//	    tagPublish.publish(tagDetected);
 	}
 }
 
