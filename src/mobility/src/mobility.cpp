@@ -15,6 +15,8 @@
 #include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
 
+#include "PIDController.h"
+
 // Custom messages
 #include <shared_messages/TagsImage.h>
 
@@ -25,22 +27,19 @@
 
 using namespace std;
 
-#define ARRAY_SIZE(array) (sizeof((array))/sizeof((array[0])))
-
 // Random number generator
 random_numbers::RandomNumberGenerator *rng;
 
-// Numeric Variables
-string publishedName;
-char host[128];
-bool sent_name = false;
+PIDController pidController;
 
-char prev_state_machine[128];
-int currentMode = 0;
+string roverName;
+char host[128];
+bool publishedName = false;
+
+int simulationMode = 0;
 float mobilityLoopTimeStep = 0.1; // time between the mobility loop calls
 float status_publish_interval = 5;
 float killSwitchTimeout = 10;
-geometry_msgs::Twist velocity;
 
 geometry_msgs::Pose2D currentLocation;
 geometry_msgs::Pose2D goalLocation;
@@ -102,7 +101,6 @@ double t_theta_error = 0;
 double t_theta_error_prior = 0;
 double t_theta_integral = 0;
 
-// velocity PID controller
 double velocity_error = 0;
 double velocity_error_prior = 0;
 double velocity_integral = 0;
@@ -180,10 +178,13 @@ void killSwitchTimerEventHandler(const ros::TimerEvent &event);
 void messageHandler(const std_msgs::String::ConstPtr &message);
 
 //Utility functions
+double computeGoalTheta(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation);
+double computeDistanceToGoal(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation);
+void setGoalLocation(double goalLocationX, double goalLocationY);
 double velocityPID(double KP, double KI, double KD);
 double r_thetaPID(double KP, double KI, double KD);
 double t_thetaPID(double KP, double KI, double KD);
-double distance_(double x1, double x2, double y1, double y2);
+
 
 int searchQueue();
 
@@ -212,7 +213,7 @@ void homeMessage(vector<string> msg_parts);
 int main(int argc, char **argv)
 {
     gethostname(host, sizeof(host));
-    string hostname(host);
+    string hostName(host);
 
     rng = new random_numbers::RandomNumberGenerator(); // instantiate random number generator
 
@@ -221,35 +222,35 @@ int main(int argc, char **argv)
 
     if (argc >= 2)
     {
-        publishedName = argv[1];
-        cout << "Welcome to the world of tomorrow " << publishedName << "!  Mobility module started." << endl;
+        roverName = argv[1];
+        cout << "Welcome to the world of tomorrow " << roverName << "!  Mobility module started." << endl;
     } else
     {
-        publishedName = hostname;
-        cout << "No Name Selected. Default is: " << publishedName << endl;
+        roverName = hostName;
+        cout << "No Name Selected. Default is: " << roverName << endl;
     }
 
     // NoSignalHandler so we can catch SIGINT ourselves and shutdown the node
-    ros::init(argc, argv, (publishedName + "_MOBILITY"), ros::init_options::NoSigintHandler);
+    ros::init(argc, argv, (roverName + "_MOBILITY"), ros::init_options::NoSigintHandler);
     ros::NodeHandle mNH;
 
     signal(SIGINT, sigintEventHandler); // Register the SIGINT event handler so the node can shutdown properly
 
-    joySubscriber = mNH.subscribe((publishedName + "/joystick"), 10, joyCmdHandler);
-    modeSubscriber = mNH.subscribe((publishedName + "/mode"), 1, modeHandler);
-    targetSubscriber = mNH.subscribe((publishedName + "/targets"), 10, targetHandler);
-    obstacleSubscriber = mNH.subscribe((publishedName + "/obstacle"), 10, obstacleHandler);
-    odometrySubscriber = mNH.subscribe((publishedName + "/odom/ekf"), 10, odometryHandler);
+    joySubscriber = mNH.subscribe((roverName + "/joystick"), 10, joyCmdHandler);
+    modeSubscriber = mNH.subscribe((roverName + "/mode"), 1, modeHandler);
+    targetSubscriber = mNH.subscribe((roverName + "/targets"), 10, targetHandler);
+    obstacleSubscriber = mNH.subscribe((roverName + "/obstacle"), 10, obstacleHandler);
+    odometrySubscriber = mNH.subscribe((roverName + "/odom/ekf"), 10, odometryHandler);
     targetsCollectedSubscriber = mNH.subscribe(("targetsCollected"), 10, targetsCollectedHandler);
     messageSubscriber = mNH.subscribe(("messages"), 10, messageHandler);
 
-    status_publisher = mNH.advertise<std_msgs::String>((publishedName + "/status"), 1, true);
-    velocityPublish = mNH.advertise<geometry_msgs::Twist>((publishedName + "/velocity"), 10);
-    stateMachinePublish = mNH.advertise<std_msgs::String>((publishedName + "/state_machine"), 1, true);
+    status_publisher = mNH.advertise<std_msgs::String>((roverName + "/status"), 1, true);
+    velocityPublish = mNH.advertise<geometry_msgs::Twist>((roverName + "/velocity"), 10);
+    stateMachinePublish = mNH.advertise<std_msgs::String>((roverName + "/state_machine"), 1, true);
     targetCollectedPublish = mNH.advertise<std_msgs::Int16>(("targetsCollected"), 1, true);
     messagePublish = mNH.advertise<std_msgs::String>(("messages"), 10, true);
-    targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((publishedName + "/targetPickUpImage"), 1, true);
-    targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((publishedName + "/targetDropOffImage"), 1, true);
+    targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetPickUpImage"), 1, true);
+    targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetDropOffImage"), 1, true);
 
     publish_status_timer = mNH.createTimer(ros::Duration(status_publish_interval), publishStatusTimerEventHandler);
     killSwitchTimer = mNH.createTimer(ros::Duration(killSwitchTimeout), killSwitchTimerEventHandler);
@@ -269,7 +270,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
 {
     std_msgs::String stateMachineMsg;
 
-    if ((currentMode == 2 || currentMode == 3)) // Robot is in automode
+    if ((simulationMode == 2 || simulationMode == 3)) // Robot is in automode
     {
         if (transitionsToAuto == 0)
         {
@@ -282,17 +283,13 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_INITIALIZE:
         {
             stateMachineMsg.data = "INITIALIZING";
-            if (publishedName == "ajax" || publishedName == "aeneas") // set mode to searcher
+            if (roverName == "ajax" || roverName == "aeneas") // set mode to searcher
             {
                 roverCurrentMode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
 
-                if (publishedName == "ajax") // assign waypoints to perform lawnmower
+                if (roverName == "ajax") // assign waypoints to perform lawnmower
                 {
-                    // init local waypoints
-                    goalLocation.x =  waypoints_x[0];
-                    goalLocation.y = waypoints_y[0];
-                    goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-
+                    setGoalLocation(waypoints_x[0],waypoints_y[0]);
                     geometry_msgs::Pose2D nextPosition;
                     for (int i = LAWNMOWER_SIZE_1; i > 0; i--)
                     {
@@ -301,13 +298,9 @@ void mobilityStateMachine(const ros::TimerEvent &)
                         ajax_waypoints.push_back(nextPosition);
                     }
                 }
-                else if (publishedName == "aeneas") // assign waypoints to perform lawnmower
+                else if (roverName == "aeneas") // assign waypoints to perform lawnmower
                 {
-                    // init local waypoints
-                    goalLocation.x = waypoints_x2[0];
-                    goalLocation.y = waypoints_y2[0];
-                    goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-
+                    setGoalLocation(waypoints_x2[0],waypoints_y2[0]);
                     geometry_msgs::Pose2D nextPosition;
                     for (int i = LAWNMOWER_SIZE_2; i > 0; i--)
                     {
@@ -319,15 +312,13 @@ void mobilityStateMachine(const ros::TimerEvent &)
                     }
                 }
             }
-            else // all other robots, assign random point to search and collect
+            else // all other robots, assign to collect
             {
                 roverCurrentMode = MODE_COLLECTOR;
-//                visitRandomLocation();
-                goalLocation.x = 0.0;
-                goalLocation.y = 0.0;
-                goalLocation.theta = M_PI;
+                setGoalLocation(currentLocation.x,currentLocation.y);
             }
             stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+//            pidController.resetDistanceErrorIntegrator();
             break;
         }
         case STATE_MACHINE_RESET_ROTATE_PID:
@@ -341,27 +332,23 @@ void mobilityStateMachine(const ros::TimerEvent &)
         {
             double angularVelocity = 0.0;
             double randVel = rng->uniformReal(-.02, 0.02);
-//            goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-//            if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) > 0.2)
-            if (angles::shortest_angular_distance(currentLocation.theta, atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x)) > 0.25)
+            if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) > 0.25)
             {
-                // double angularVelocity = r_thetaPID(1.55, 0.2, 0);
                 angularVelocity = r_thetaPID(0.75, 0.0, 0.0); //JTI Tuned KI to match the negative rotation case.
                 if(angularVelocity > MAX_ANGULAR_VELOCITY)
                 {
                     angularVelocity = MAX_ANGULAR_VELOCITY;
                 }
-                setVelocity(randVel, angularVelocity); //add a little bit of random linear velocity to make turns less sticky
+                setVelocity(randVel, angularVelocity); //add a little bit of random linear-velocity to make turns less sticky
             }
-//            else if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) < -0.2)
-            else if (angles::shortest_angular_distance(currentLocation.theta, atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x)) < -0.25)
+            else if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) < -0.25)
             {
                 angularVelocity = r_thetaPID(0.75, 0.0, 0.0);
                 if(angularVelocity < -MAX_ANGULAR_VELOCITY)
                 {
                     angularVelocity = -MAX_ANGULAR_VELOCITY;
                 }
-                setVelocity(randVel, angularVelocity);//add a little bit of random linear velocity to make turns less sticky
+                setVelocity(randVel, angularVelocity);//add a little bit of random linear-velocity to make turns less sticky
             }
             else
             {
@@ -370,11 +357,9 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 stateMachineState = STATE_MACHINE_RESET_TRANSLATE_PID; // move to translate step
             }
             std::stringstream converter;
-            converter <<
-                         angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) << ", " <<
-                         angularVelocity;
+            converter << angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) << ", " << angularVelocity;
 
-            stateMachineMsg.data = "ROTATING";//, " + converter.str();
+            stateMachineMsg.data = "ROTATING";
             break;
         }
         case STATE_MACHINE_RESET_TRANSLATE_PID:
@@ -382,6 +367,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             stateMachineMsg.data = "RESETTING TRANSLATE PID";
             t_theta_integral = 0;
             velocity_integral = 0;
+//            pidController.resetDistanceErrorIntegrator();
             stateMachineState = STATE_MACHINE_TRANSLATE;
             break;
         }
@@ -392,10 +378,8 @@ void mobilityStateMachine(const ros::TimerEvent &)
             double linearVelocity = 0.0;
 
 
-            double calc_distance = distance_(goalLocation.x, currentLocation.x, goalLocation.y, currentLocation.y);
-//            goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-//            if ((fabs(angles::shortest_angular_distance(currentLocation.theta, atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x))) < M_PI_2)||(calc_distance >= 0.25)) // if you are not within 25cm of goal
-            if (calc_distance >= 0.25) // if you are not within 25cm of goal
+            double distanceToGoal = computeDistanceToGoal(goalLocation, currentLocation);
+            if (distanceToGoal >= 0.25) // if you are not within 25cm of goal
             {
                 angularVelocity = t_thetaPID(0.50, 0.0, 0.0); // needed to keep robot going straight
                 linearVelocity = velocityPID(0.2, 0.0, 0.0);//0.15
@@ -408,7 +392,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 {
                     angularVelocity = -MAX_ANGULAR_VELOCITY;
                 }
-                double max_Remaining_Velocity = MAX_LINEAR_VELOCITY;//-fabs(angularVelocity); // We can only supply 0.3 velocity in total divided between angular and linear.  Give priorty to angular.
+                double max_Remaining_Velocity = MAX_LINEAR_VELOCITY;//-fabs(angularVelocity); // We can only supply 0.3 total-velocity in total divided between angular and linear.  Give priorty to angular.
                 if(linearVelocity > max_Remaining_Velocity)
                 {
                     linearVelocity = max_Remaining_Velocity;
@@ -439,24 +423,24 @@ void mobilityStateMachine(const ros::TimerEvent &)
 
                     goalLocation.x = savedPositions.back().x;
                     goalLocation.y = savedPositions.back().y;
-                    goalLocation.theta = savedPositions.back().theta;
+                    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
                     //                    pivot();
                     savedPositions.pop_back();
                     stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (publishedName == "ajax") && (ajax_waypoints.size() > 0) )
+                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "ajax") && (ajax_waypoints.size() > 0) )
                 {
                     stateMachineState = STATE_MACHINE_POP_WAYPOINT; // We are ajax and we are currently searching with remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (publishedName == "aeneas") && (aeneas_waypoints.size() > 0) )
+                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "aeneas") && (aeneas_waypoints.size() > 0) )
                 {
                     stateMachineState = STATE_MACHINE_POP_WAYPOINT; // We are aeneas and we are currently searching with remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (publishedName == "ajax") && (ajax_waypoints.size() <= 0) )
+                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "ajax") && (ajax_waypoints.size() <= 0) )
                 {
                     stateMachineState = STATE_MACHINE_CHANGE_MODE; // We are ajax and we are currently searching with no remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (publishedName == "aeneas") && (aeneas_waypoints.size() <= 0) )
+                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "aeneas") && (aeneas_waypoints.size() <= 0) )
                 {
                     stateMachineState = STATE_MACHINE_CHANGE_MODE; // We are aeneas and we are currently searching with no remaining waypoints
                 }
@@ -475,9 +459,9 @@ void mobilityStateMachine(const ros::TimerEvent &)
             }
             std::stringstream converter;
 //            converter <<
-//                         "Distance: " << calc_distance << " AngularVel: " << angularVelocity << " LinearVel: " << linearVelocity << " GoalLocationX: " << goalLocation.x << " CurrentLocationX: " << currentLocation.x << " GoalLocationY: " << goalLocation.y << " CurrentLocationY: " << currentLocation.y;
+//                         "Distance: " << distanceToGoal << " AngularVel: " << angularVelocity << " LinearVel: " << linearVelocity << " GoalLocationX: " << goalLocation.x << " CurrentLocationX: " << currentLocation.x << " GoalLocationY: " << goalLocation.y << " CurrentLocationY: " << currentLocation.y;
             converter <<
-                         "G_T: " << goalLocation.theta << " C_T: " << currentLocation.theta << " A_V: " << angularVelocity << " Dist: " << calc_distance << " L_V: " << linearVelocity << " G_X: " << goalLocation.x << " G_Y: " << goalLocation.y;
+                         "G_T: " << goalLocation.theta << " C_T: " << currentLocation.theta << " A_V: " << angularVelocity << " Dist: " << distanceToGoal << " L_V: " << linearVelocity << " G_X: " << goalLocation.x << " G_Y: " << goalLocation.y;
 
             stateMachineMsg.data = "TRANSLATING";//, " + converter.str();
             break;
@@ -485,18 +469,18 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_POP_WAYPOINT:
         {
             stateMachineMsg.data = "POPPING WAYPOINT";
-            if (publishedName == "ajax")
+            if (roverName == "ajax")
             {
                 goalLocation.x = ajax_waypoints.back().x;
                 goalLocation.y = ajax_waypoints.back().y;
-                goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
                 ajax_waypoints.pop_back();
             }
-            if (publishedName == "aeneas")
+            if (roverName == "aeneas")
             {
                 goalLocation.x = aeneas_waypoints.back().x;
                 goalLocation.y = aeneas_waypoints.back().y;
-                goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
                 aeneas_waypoints.pop_back();
             }
             stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
@@ -524,10 +508,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 double t = rng->uniformReal(0, 2 * M_PI);
                 goalLocation.x = targetPositions[targetClaimed.data].x + r * cos(t); // Explore in a 1m circle around where you think the target is located.
                 goalLocation.y = targetPositions[targetClaimed.data].y + r * sin(t);
-                goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-                //            goalLocation.x = currentLocation.x;
-                //            goalLocation.y = currentLocation.y;
-                //            goalLocation.theta = atan2(currentLocation.y, currentLocation.x) + rng->uniformReal(0, 2 * M_PI); // Since original rover saw the april tag from this (x,y) position we should rotate to a random heading till we see it.
+                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
                 stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
             }
             break;
@@ -555,7 +536,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 roverCapacity=CAPACITY_CLAIMED; // Update status of rover
                 goalLocation.x = targetPositions[result].x;
                 goalLocation.y = targetPositions[result].y;
-                goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
                 stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
             }
             else
@@ -578,10 +559,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             double t = rng->uniformReal(0, 2 * M_PI);
             goalLocation.x = 0.0 + r * cos(t); // Explore in a 1m circle around where you think the target is located.
             goalLocation.y = 0.0 + r * sin(t);
-            goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-//            goalLocation.x = currentLocation.x;
-//            goalLocation.y = currentLocation.y;
-//            goalLocation.theta = atan2(currentLocation.y, currentLocation.x) + rng->uniformReal(0, 2 * M_PI); // Since original rover saw the april tag from this (x,y) position we should rotate to a random heading till we see it.
+            goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
             stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
             break;
         }
@@ -598,23 +576,15 @@ void mobilityStateMachine(const ros::TimerEvent &)
 
         // publish current state for the operator to see
         std::stringstream converter;
-        converter <<
-                     "CURRENT MODE: " << currentMode;
+        converter <<"CURRENT MODE: " << simulationMode;
 
         stateMachineMsg.data = "WAITING, " + converter.str();
     }
-
-    // publish state machine string for user, only if it has changed, though
-    if (strcmp(stateMachineMsg.data.c_str(), prev_state_machine) != 0)
-    {
-        stateMachinePublish.publish(stateMachineMsg);
-        sprintf(prev_state_machine, "%s", stateMachineMsg.data.c_str());
-    }
-
 }
 
 void setVelocity(double linearVel, double angularVel)
 {
+    geometry_msgs::Twist velocity;
     // Stopping and starting the timer causes it to start counting from 0 again.
     // As long as this is called before the kill swith timer reaches killSwitchTimeout seconds
     // the rover's kill switch wont be called.
@@ -775,7 +745,7 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
 void modeHandler(const std_msgs::UInt8::ConstPtr &message)
 {
-    currentMode = message->data;
+    simulationMode = message->data;
     setVelocity(0.0, 0.0);
 }
 
@@ -865,7 +835,7 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr &message)
 
 void joyCmdHandler(const geometry_msgs::Twist::ConstPtr &message)
 {
-    if (currentMode == 0 || currentMode == 1)
+    if (simulationMode == 0 || simulationMode == 1)
     {
         setVelocity(message->linear.x, message->angular.z);
     }
@@ -873,13 +843,13 @@ void joyCmdHandler(const geometry_msgs::Twist::ConstPtr &message)
 
 void publishStatusTimerEventHandler(const ros::TimerEvent &)
 {
-    if (!sent_name)
+    if (!publishedName)
     {
         std_msgs::String name_msg;
         name_msg.data = "I ";
-        name_msg.data = name_msg.data + publishedName;
+        name_msg.data = name_msg.data + roverName;
         messagePublish.publish(name_msg);
-        sent_name = true;
+        publishedName = true;
     }
 
     std_msgs::String msg;
@@ -912,19 +882,27 @@ void sigintEventHandler(int sig)
 /***********************
  * UTILITY FUNCTIONS
 ************************/
-double distance_(double x1, double x2, double y1, double y2)
+double computeGoalTheta(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation)
 {
-    return fabs(sqrt( (pow( (x2 - x1), 2.0)) + (pow( (y2 - y1) , 2.0)) ));
+    return atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+}
+
+double computeDistanceToGoal(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation)
+{
+    return fabs(sqrt( (pow( (goalLocation.x - currentLocation.x), 2.0)) + (pow( (goalLocation.y - currentLocation.y) , 2.0)) ));
+}
+
+void setGoalLocation(double goalLocationX, double goalLocationY)
+{
+    goalLocation.x = goalLocationX;
+    goalLocation.y = goalLocationY;
+    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
 }
 
 // theta PID controller for rotate state
 double r_thetaPID(double KP, double KI, double KD)
 {
-//    double theta_desired = goalLocation.theta; //atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
-//    r_theta_error = theta_desired - currentLocation.theta;
-//    r_theta_error = theta_desired - atan2(currentLocation.y,currentLocation.x);
-//    r_theta_error = angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta);
-    r_theta_error = angles::shortest_angular_distance(currentLocation.theta,atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x));
+    r_theta_error = angles::shortest_angular_distance(currentLocation.theta,computeGoalTheta(goalLocation, currentLocation));
     double theta_error_prime = atan2(sin(r_theta_error), cos(r_theta_error));
     r_theta_integral = r_theta_integral + theta_error_prime;
     double theta_derivative = (theta_error_prime - r_theta_error_prior) / mobilityLoopTimeStep;
@@ -938,7 +916,7 @@ double r_thetaPID(double KP, double KI, double KD)
 double t_thetaPID(double KP, double KI, double KD)
 {
 //    t_theta_error = goalLocation.theta - currentLocation.theta;
-    t_theta_error = angles::shortest_angular_distance(currentLocation.theta,atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x));
+    t_theta_error = angles::shortest_angular_distance(currentLocation.theta,computeGoalTheta(goalLocation, currentLocation));
     double theta_error_prime = atan2(sin(t_theta_error), cos(t_theta_error));
     t_theta_integral = t_theta_integral + theta_error_prime;
     double theta_derivative = (theta_error_prime - t_theta_error_prior) / mobilityLoopTimeStep;
@@ -948,10 +926,9 @@ double t_thetaPID(double KP, double KI, double KD)
     return theta_output;
 }
 
-// velocity PID controller
 double velocityPID(double KP, double KI, double KD)
 {
-    velocity_error = distance_(goalLocation.x, currentLocation.x, goalLocation.y, currentLocation.y);
+    velocity_error = computeDistanceToGoal(goalLocation, currentLocation);
     velocity_integral = velocity_integral + velocity_error;
     double velocity_derivative = (velocity_error - velocity_error_prior) / mobilityLoopTimeStep;
     double velocity_output = (KP*velocity_error) + (KI*velocity_integral) + (KD*velocity_derivative);
@@ -973,7 +950,7 @@ void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
     std::stringstream converter;
     
     converter <<
-                 publishedName << " " <<
+                 roverName << " " <<
                  msg.data << " " <<
                  currentLocation.x << " " <<
                  currentLocation.y << " " <<
@@ -990,7 +967,7 @@ void claimResource(int resouceID) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << publishedName << " " << current_time-timeStampTransitionToAuto;
+    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto;
     std_msgs::String message;
     message.data = "C " + converter.str(); // claim this token for pickup
     messagePublish.publish(message);
@@ -1000,7 +977,7 @@ void unclaimResource(int resouceID) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << publishedName << " " << current_time-timeStampTransitionToAuto;
+    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto;
     std_msgs::String message;
     message.data = "U " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
@@ -1020,7 +997,7 @@ void homeResource(int resouceID) // simply publish (broadcast)
     }
 
     std::stringstream converter;
-    converter << resouceID << " " << publishedName << " " << current_time-timeStampTransitionToAuto << " " << targets_home_size;
+    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto << " " << targets_home_size;
     std_msgs::String message;
     message.data = "H " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
@@ -1029,19 +1006,14 @@ void homeResource(int resouceID) // simply publish (broadcast)
 // search detected targets and find the shortest distance to your current position
 int searchQueue()
 {
-    double found_x = 0;
-    double found_y = 0;
-    double found_theta = 0;
     double minDistance = LONG_MAX;
     int idClosestTarget = -1;
-
     for(int resource = 0; resource < 256; resource++)
     {
         if(targetsAvailDetected[resource])
         {
-            found_x = targetPositions[resource].x;
-            found_y = targetPositions[resource].y;
-            double current_distance = distance_(found_x, currentLocation.x, found_y, currentLocation.y);
+
+            double current_distance = computeDistanceToGoal(targetPositions[resource], currentLocation);
             if(current_distance < minDistance)
             {
                 minDistance = current_distance;
@@ -1049,7 +1021,6 @@ int searchQueue()
             }
         }
     }
-
     return idClosestTarget;
 }
 
@@ -1166,7 +1137,7 @@ void detectedMessage(vector<string> msg_parts)
 
 //    std::stringstream temp_data;
 //    temp_data <<
-//                 publishedName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size   ;
+//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size   ;
 //    std_msgs::String message;
 //    message.data = "DETECTED " + temp_data.str();
 //    messagePublish.publish(message);
@@ -1215,7 +1186,7 @@ void claimMessage(vector<string> msg_parts) // claimed this, now remove from glo
 
 //    std::stringstream temp_data;
 //    temp_data <<
-//                 publishedName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
+//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
 //    std_msgs::String message;
 //    message.data = "CLAIM " + temp_data.str();
 //    messagePublish.publish(message);
@@ -1264,7 +1235,7 @@ void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to
 
 //    std::stringstream temp_data;
 //    temp_data <<
-//                 publishedName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
+//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
 //    std_msgs::String message;
 //    message.data = "UNCLAIM " + temp_data.str();
 //    messagePublish.publish(message);
@@ -1312,7 +1283,7 @@ void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to gl
 
 //    std::stringstream temp_data;
 //    temp_data <<
-//                 publishedName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsHome " << targets_home_size;
+//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsHome " << targets_home_size;
 //    std_msgs::String message;
 //    message.data = "HOME " + temp_data.str();
 //    messagePublish.publish(message);
@@ -1324,7 +1295,7 @@ void debugWaypoints()
 {
     std::stringstream converter;
     converter <<
-                 publishedName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y;
+                 roverName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y;
     std_msgs::String message;
     message.data = "WAYPOINTS " + converter.str();
     messagePublish.publish(message);
@@ -1334,7 +1305,7 @@ void debugRotate()
 {
     std::stringstream converter;
     converter <<
-                 publishedName << " ct" << currentLocation.theta << " gt" << goalLocation.theta;
+                 roverName << " ct" << currentLocation.theta << " gt" << goalLocation.theta;
     std_msgs::String message;
     message.data = "ROTATING " + converter.str();
     messagePublish.publish(message);
@@ -1344,7 +1315,7 @@ void debugTranslate(double distance_)
 {
     std::stringstream converter;
     converter <<
-                 publishedName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y << " " << distance_;
+                 roverName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y << " " << distance_;
     std_msgs::String message;
     message.data = "TRANSLATING " + converter.str();
     messagePublish.publish(message);
@@ -1369,7 +1340,7 @@ void debugRandom()
 
     std::stringstream converter;
     converter <<
-                 publishedName << " targetsAvailDetected_size " << targets_detected_size << "TOTAL: " << count;
+                 roverName << " targetsAvailDetected_size " << targets_detected_size << "TOTAL: " << count;
     std_msgs::String message;
     message.data = "RANDOM " + converter.str();
     messagePublish.publish(message);
@@ -1379,7 +1350,7 @@ void debugTargetScreenshot(int count)
 {
     std::stringstream converter;
     converter <<
-                 publishedName << " " << count;
+                 roverName << " " << count;
     std_msgs::String message;
     message.data = "COUNT " + converter.str();
     messagePublish.publish(message);
@@ -1391,7 +1362,7 @@ void visitRandomLocation()
     double t = rng->uniformReal(0, 2 * M_PI);
     goalLocation.x = r * cos(t);
     goalLocation.y = r * sin(t);
-    goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
 }
 
 void lookBack()
@@ -1402,34 +1373,20 @@ void lookBack()
     savedPosition.theta = goalLocation.theta;
     cluster_detect.push_back(savedPosition);
 
-    // goalLocation.theta = currentLocation.theta - 0.2; // move to the right
-    // goalLocation.x = currentLocation.x + (0.5 * cos(goalLocation.theta));
-    // goalLocation.y = currentLocation.y + (0.5 * sin(goalLocation.theta));
-    // setVelocity(0.0, 0.0);
-
     // new goal locations
     goalLocation.x = .25*cos(currentLocation.theta + M_PI) + currentLocation.x;
     goalLocation.y = .25*sin(currentLocation.theta + M_PI) + currentLocation.y;
-    goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
     
-
-//    pivot();
-
-
-    // goalLocation.x = currentLocation.x;
-    // goalLocation.y = currentLocation.y;
-    // goalLocation.theta = currentLocation.theta - M_PI;
-
     std::stringstream converter;
     converter <<
-                 publishedName << " cx " << currentLocation.x << " cy " << currentLocation.y << " ct " << currentLocation.theta <<
+                 roverName << " cx " << currentLocation.x << " cy " << currentLocation.y << " ct " << currentLocation.theta <<
                  " gx " << goalLocation.x << " gy " << goalLocation.y << " gt " << goalLocation.theta;
     std_msgs::String message;
     message.data = "CLUSTER " + converter.str();
     messagePublish.publish(message);
 
     cluster = true;
-    // stateMachineState = STATE_MACHINE_TRANSFORM;
 }
 
 void circle()
@@ -1441,7 +1398,7 @@ void circle()
     {
         goalLocation.x = 0.001*cos(currentLocation.theta + M_PI);
         goalLocation.y = 0.001*sin(currentLocation.theta + M_PI);
-        goalLocation.theta = atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
+        goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
         // goalLocation.theta = angles::shortest_angular_distance(currentLocation.theta, M_PI); // flip directions
         // goalLocation.theta = currentLocation.theta - M_PI; // flip directions
 //        pivot(); // rotate backwards

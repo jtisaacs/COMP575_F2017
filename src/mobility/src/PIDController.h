@@ -2,7 +2,8 @@
 #define PIDCONTROLLER_H
 
 #include <geometry_msgs/Pose2D.h>
-#include "ThetaError.h"
+#include "RotationalError.h"
+#include "TranslationalError.h"
 
 /**
  * This class implements a PID controller for the rovers. The code
@@ -16,10 +17,11 @@ public:
     PIDController();
     float calculateTranslationalVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
     void resetDistanceErrorIntegrator();
-    float calculateRotationalVelocity(float currentTheta, float goalTheta);
+    float calculateRotationalVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
     void resetThetaErrorIntegrator();
     bool checkForNewGoalTheta(float goal_theta_prior, float goal_theta);
     void updateThetaErrorIntegrator(float goal_theta, float current_error);
+    void updateRotationalErrorIntegrator(geometry_msgs::Pose2D goalLocation, float current_error);
 
 
 private:
@@ -29,7 +31,8 @@ private:
     float distanceErrorIntegrator;
     float distanceErrorPrior;
     geometry_msgs::Pose2D goalLocationPrior;
-    ThetaError theta_error;
+    RotationalError rotational_error;
+    TranslationalError translational_error;
 
     float thetaErrorIntegrator;
     float theta_error_prior;

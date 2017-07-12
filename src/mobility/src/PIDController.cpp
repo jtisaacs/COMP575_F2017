@@ -17,8 +17,8 @@ float PIDController::calculateTranslationalVelocity(geometry_msgs::Pose2D curren
 //        // We have a new goal, so we should reset the integrator.
 //        resetDistanceErrorIntegrator();
 //    }
-    float distanceError = hypot(goalLocation.x-currentLocation.x, goalLocation.y-currentLocation.y);
-    distanceErrorIntegrator = distanceErrorIntegrator + distanceError;
+    float current_error = translational_error.calculateCurrentError(currentLocation, goalLocation);
+
     float distanceErrorDerivative = (distanceError - distanceErrorPrior);
     float desiredTranslationalVelocity = (KP_TRANSLATIONAL*distanceError) + (KI_TRANSLATIONAL*distanceErrorIntegrator) + (KD_TRANSLATIONAL*distanceErrorDerivative);
     distanceErrorPrior = distanceError;
@@ -34,17 +34,17 @@ float PIDController::calculateTranslationalVelocity(geometry_msgs::Pose2D curren
     return desiredTranslationalVelocity;
 }
 
-float PIDController::calculateRotationalVelocity(float current_theta, float goal_theta)
+float PIDController::calculateRotationalVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation)
 {
-    float current_error = theta_error.calculateCurrentError(goal_theta, current_theta);
-    updateThetaErrorIntegrator(goal_theta, current_error);
-    float error_integral = theta_error.getIntegrator();
-    float error_derivative = theta_error.calculateDerivative(current_error);
+    float current_error = rotational_error.calculateCurrentError(goalLocation, currentLocation);
+    updateThetaErrorIntegrator(goalLocation.theta, current_error);
+    float error_integral = rotational_error.getIntegrator();
+    float error_derivative = rotational_error.calculateDerivative(current_error);
     float desiredAngularVelocity = (KP_ROTATIONAL*current_error) + (KI_ROTATIONAL*error_integral) + (KD_ROTATIONAL*error_derivative);
     desiredAngularVelocity = saturation(desiredAngularVelocity,MAX_ANGULAR_VELOCITY);
 
-    theta_error.setPriorError(current_error);
-    goal_theta_prior = goal_theta;
+    rotational_error.setPriorError(current_error);
+    goal_theta_prior = goalLocation.theta;
 
     return desiredAngularVelocity;
 }
@@ -77,10 +77,22 @@ void PIDController::updateThetaErrorIntegrator(float goal_theta, float current_e
 {
     if (checkForNewGoalTheta(goal_theta_prior, goal_theta))
     {
-        theta_error.resetIntegrator();
+        rotational_error.resetIntegrator();
     }
     else
     {
-        theta_error.updateIntegrator(current_error);
+        rotational_error.updateIntegrator(current_error);
+    }
+}
+
+void PIDController::updateRotationalErrorIntegrator(geometry_msgs::Pose2D goalLocation, float current_error)
+{
+    if (checkForNewGoalTheta(goal_theta_prior, goal_theta))
+    {
+        rotational_error.resetIntegrator();
+    }
+    else
+    {
+        rotational_error.updateIntegrator(current_error);
     }
 }

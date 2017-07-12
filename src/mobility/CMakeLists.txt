@@ -20,7 +20,12 @@ include_directories(
 )
 
 add_executable(
-  mobility src/mobility.cpp
+	mobility  
+	src/mobility.cpp
+  	src/PIDController.cpp
+	src/PIDError.cpp
+	src/RotationalError.cpp
+	src/TranslationalError.cpp
 )
 
 add_dependencies(mobility ${catkin_EXPORTED_TARGETS})
