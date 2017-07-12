@@ -26,6 +26,9 @@ add_executable(
 	src/PIDError.cpp
 	src/RotationalError.cpp
 	src/TranslationalError.cpp
+	src/Saturation.cpp
+	src/RotationalController.cpp
+	src/TranslationalController.cpp
 )
 
 add_dependencies(mobility ${catkin_EXPORTED_TARGETS})

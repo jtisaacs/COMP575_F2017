@@ -2,53 +2,35 @@
 #define PIDCONTROLLER_H
 
 #include <geometry_msgs/Pose2D.h>
-#include "RotationalError.h"
-#include "TranslationalError.h"
+#include "PIDError.h"
+#include "Saturation.h"
 
-/**
- * This class implements a PID controller for the rovers. The code
- * here should not be modified.
- */
 class PIDController
 {
 
 public:
 
     PIDController();
-    float calculateTranslationalVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
-    void resetDistanceErrorIntegrator();
-    float calculateRotationalVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
-    void resetThetaErrorIntegrator();
-    bool checkForNewGoalTheta(float goal_theta_prior, float goal_theta);
-    void updateThetaErrorIntegrator(float goal_theta, float current_error);
-    void updateRotationalErrorIntegrator(geometry_msgs::Pose2D goalLocation, float current_error);
-
+    float calculateVelocity(geometry_msgs::Pose2D current_location, geometry_msgs::Pose2D goal_location);
 
 private:
-    float saturation(float independent_variable, float maximum_absolute_value);
-    float applyMaximumLimit(float independent_variable, float maximum_value_limit);
-    float applyMinimumLimit(float independent_variable, float minimum_value_limit);
-    float distanceErrorIntegrator;
-    float distanceErrorPrior;
-    geometry_msgs::Pose2D goalLocationPrior;
-    RotationalError rotational_error;
-    TranslationalError translational_error;
 
-    float thetaErrorIntegrator;
-    float theta_error_prior;
-    float goal_theta_prior;
+    void updateErrorIntegrator(geometry_msgs::Pose2D goal_location, float current_error);
+    virtual bool checkForNewGoal(geometry_msgs::Pose2D goal_location){}
 
-    static const float KP_TRANSLATIONAL = 1.5;
-    static const float KI_TRANSLATIONAL = 0.001;
-    static const float KD_TRANSLATIONAL = 0.0;
+protected:
 
-    static const float KP_ROTATIONAL = 0.75;
-    static const float KI_ROTATIONAL = 0.0;
-    static const float KD_ROTATIONAL = 0.0;
-
-    static const float MAX_LINEAR_VELOCITY = 0.3;
-    static const float MAX_ANGULAR_VELOCITY = 0.3;
     static const float FLOAT_COMPARISON_THRESHOLD = 1E-6;
+    static const float MAX_VELOCITY = 0.3;
+    struct gains_struct{
+        float KP;
+        float KI;
+        float KD;
+    };
+    struct gains_struct gains;
+    geometry_msgs::Pose2D goal_location_prior;
+    PIDError pid_error;
+
 };
 
 #endif // PIDCONTROLLER_H
