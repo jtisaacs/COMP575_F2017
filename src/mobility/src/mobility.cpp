@@ -15,13 +15,14 @@
 #include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
 
-#include "PIDController.h"
+#include "RotationalController.h"
+#include "TranslationalController.h"
 
 // Custom messages
 #include <shared_messages/TagsImage.h>
 
 // To handle shutdown signals so the node quits properly in response to "rosnode kill"
-#include <ros/ros.h>
+
 #include <signal.h>
 #include <math.h> 
 
@@ -30,7 +31,8 @@ using namespace std;
 // Random number generator
 random_numbers::RandomNumberGenerator *rng;
 
-PIDController pidController;
+TranslationalController translational_controller;
+RotationalController rotational_controller;
 
 string roverName;
 char host[128];
@@ -140,6 +142,7 @@ ros::Publisher status_publisher;
 ros::Publisher targetCollectedPublish;
 ros::Publisher targetPickUpPublish;
 ros::Publisher targetDropOffPublish;
+ros::Publisher angular_publisher;
 
 ros::Publisher messagePublish;
 
@@ -251,7 +254,7 @@ int main(int argc, char **argv)
     messagePublish = mNH.advertise<std_msgs::String>(("messages"), 10, true);
     targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetPickUpImage"), 1, true);
     targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetDropOffImage"), 1, true);
-
+    angular_publisher = mNH.advertise<std_msgs::String>((roverName + "/angular"),1,true);
     publish_status_timer = mNH.createTimer(ros::Duration(status_publish_interval), publishStatusTimerEventHandler);
     killSwitchTimer = mNH.createTimer(ros::Duration(killSwitchTimeout), killSwitchTimerEventHandler);
     stateMachineTimer = mNH.createTimer(ros::Duration(mobilityLoopTimeStep), mobilityStateMachine);
@@ -317,48 +320,30 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 roverCurrentMode = MODE_COLLECTOR;
                 setGoalLocation(currentLocation.x,currentLocation.y);
             }
-            stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
-//            pidController.resetDistanceErrorIntegrator();
-            break;
-        }
-        case STATE_MACHINE_RESET_ROTATE_PID:
-        {
-            stateMachineMsg.data = "RESETTING ROTATE PID";
-            r_theta_integral = 0;
             stateMachineState = STATE_MACHINE_ROTATE;
             break;
         }
         case STATE_MACHINE_ROTATE:
         {
-            double angularVelocity = 0.0;
-            double randVel = rng->uniformReal(-.02, 0.02);
-            if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) > 0.25)
+            float angular_velocity = 0.0;
+            float random_velocity = rng->uniformReal(-.02, 0.02);
+            if (abs(angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta)) > 0.25)
             {
-                angularVelocity = r_thetaPID(0.75, 0.0, 0.0); //JTI Tuned KI to match the negative rotation case.
-                if(angularVelocity > MAX_ANGULAR_VELOCITY)
-                {
-                    angularVelocity = MAX_ANGULAR_VELOCITY;
-                }
-                setVelocity(randVel, angularVelocity); //add a little bit of random linear-velocity to make turns less sticky
-            }
-            else if (angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) < -0.25)
-            {
-                angularVelocity = r_thetaPID(0.75, 0.0, 0.0);
-                if(angularVelocity < -MAX_ANGULAR_VELOCITY)
-                {
-                    angularVelocity = -MAX_ANGULAR_VELOCITY;
-                }
-                setVelocity(randVel, angularVelocity);//add a little bit of random linear-velocity to make turns less sticky
+                angular_velocity = rotational_controller.calculateVelocity(currentLocation, goalLocation);
+//                setVelocity(random_velocity, angular_velocity);//add a little bit of random linear-velocity to make turns less sticky
             }
             else
             {
-                angularVelocity = 0.0;
-                setVelocity(0.0, angularVelocity); // stop
-                stateMachineState = STATE_MACHINE_RESET_TRANSLATE_PID; // move to translate step
+                angular_velocity = 0.0;
+//                setVelocity(0.0, angular_velocity); // stop
+//                stateMachineState = STATE_MACHINE_RESET_TRANSLATE_PID; // move to translate step
             }
             std::stringstream converter;
-            converter << angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) << ", " << angularVelocity;
-
+            converter << angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) << ", " << angular_velocity;
+            std_msgs::String message;
+            message.data = "ANGULAR INFO: " + converter.str();
+            angular_publisher.publish(message);
+            stateMachineState = STATE_MACHINE_ROTATE;
             stateMachineMsg.data = "ROTATING";
             break;
         }
