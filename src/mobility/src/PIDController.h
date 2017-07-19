@@ -10,7 +10,7 @@ class PIDController
 
 public:
 
-    PIDController();
+    PIDController( PIDError &p ) : pid_error(p) {}
     float calculateVelocity(geometry_msgs::Pose2D current_location, geometry_msgs::Pose2D goal_location);
 
 private:
@@ -29,8 +29,7 @@ protected:
     };
     struct gains_struct gains;
     geometry_msgs::Pose2D goal_location_prior;
-    PIDError pid_error;
-
+    PIDError &pid_error;
 };
 
 #endif // PIDCONTROLLER_H
