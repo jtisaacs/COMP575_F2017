@@ -16,7 +16,7 @@ public:
 private:
 
     void updateErrorIntegrator(pose goal_location, float current_error);
-    float current_error;
+
 
 protected:
 
@@ -30,6 +30,7 @@ protected:
     struct gains_struct gains;
     pose goal_location_prior;
     PIDError &pid_error;
+    float current_error;
 
 };
 

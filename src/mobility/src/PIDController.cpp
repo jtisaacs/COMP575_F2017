@@ -5,7 +5,7 @@
 float PIDController::calculateVelocity(pose current_location, pose goal_location)
 {
     std::cout << "\nCalculating Velocity\n";
-    float current_error = pid_error.calculateCurrentError(current_location, goal_location);
+    current_error = pid_error.calculateCurrentError(current_location, goal_location);
     std::cout << "current_error: " << current_error << "\n";
     std::cout << "currentLocation: " << current_location.x << ", " << current_location.y << ", "  << current_location.theta << "\n";
     std::cout << "goalLocation: " << ", " << goal_location.x << ", " << goal_location.y << ", " << goal_location.theta << "\n";
