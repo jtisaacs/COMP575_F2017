@@ -1,19 +1,20 @@
 #ifndef PIDERROR_H
 #define PIDERROR_H
 
-#include <geometry_msgs/Pose2D.h>
+#include "Pose.h"
 
 class PIDError
 {
 public:
-
     PIDError();
     void updateIntegrator(float current_error);
     void resetIntegrator();
     float getIntegrator();
     float calculateDerivative(float current_error);
     void setPriorError(float prior_error);
-    virtual float calculateCurrentError(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation){}
+    virtual float calculateCurrentError(pose currentLocation, pose goalLocation){return 1000.1000;}
+
+protected:
 
 private:
 

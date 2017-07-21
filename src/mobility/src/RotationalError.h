@@ -7,8 +7,8 @@ class RotationalError : public PIDError
 {
 
 public:
-
-    float calculateCurrentError(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
+    RotationalError();
+    float calculateCurrentError(pose currentLocation, pose goalLocation);
 
 private:
 

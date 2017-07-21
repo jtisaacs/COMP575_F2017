@@ -1,12 +1,14 @@
 #include "PIDController.h"
 #include "Saturation.h"
+#include <iostream>
 
-#include <math.h>
-#include <angles/angles.h>
-
-float PIDController::calculateVelocity(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation)
+float PIDController::calculateVelocity(pose current_location, pose goal_location)
 {
-    float current_error = pid_error.calculateCurrentError(currentLocation, goalLocation);
+    std::cout << "\nCalculating Velocity\n";
+    float current_error = pid_error.calculateCurrentError(current_location, goal_location);
+    std::cout << "current_error: " << current_error << "\n";
+    std::cout << "currentLocation: " << current_location.x << ", " << current_location.y << ", "  << current_location.theta << "\n";
+    std::cout << "goalLocation: " << ", " << goal_location.x << ", " << goal_location.y << ", " << goal_location.theta << "\n";
     float error_derivative = pid_error.calculateDerivative(current_error);
     this->updateErrorIntegrator(goal_location,current_error);
     float error_integral = pid_error.getIntegrator();
@@ -16,7 +18,7 @@ float PIDController::calculateVelocity(geometry_msgs::Pose2D currentLocation, ge
     return desired_velocity;
 }
 
-void PIDController::updateErrorIntegrator(geometry_msgs::Pose2D goal_location, float current_error)
+void PIDController::updateErrorIntegrator(pose goal_location, float current_error)
 {
     if (checkForNewGoal(goal_location))
     {
@@ -26,4 +28,9 @@ void PIDController::updateErrorIntegrator(geometry_msgs::Pose2D goal_location, f
     {
         pid_error.updateIntegrator(current_error);
     }
+}
+
+float PIDController::getCurrentError()
+{
+    return current_error;
 }

@@ -17,6 +17,7 @@
 
 #include "RotationalController.h"
 #include "TranslationalController.h"
+#include "Pose.h"
 
 // Custom messages
 #include <shared_messages/TagsImage.h>
@@ -34,45 +35,37 @@ random_numbers::RandomNumberGenerator *rng;
 TranslationalController translational_controller;
 RotationalController rotational_controller;
 
-string roverName;
+string rover_name;
 char host[128];
-bool publishedName = false;
+bool published_name = false;
 
-int simulationMode = 0;
-float mobilityLoopTimeStep = 0.1; // time between the mobility loop calls
+int simulation_mode = 0;
+float mobility_loop_time_step = 0.1;
 float status_publish_interval = 5;
-float killSwitchTimeout = 10;
+float kill_switch_timeout = 10;
 
-geometry_msgs::Pose2D currentLocation;
-geometry_msgs::Pose2D goalLocation;
+pose current_location;
+pose goal_location;
+
 
 bool avoiding_obstacle = false;
-vector <geometry_msgs::Pose2D> savedPositions;
-vector <geometry_msgs::Pose2D> cluster_detect;
+vector <pose> saved_positions;
+vector <pose> cluster_detect;
 
-std_msgs::Int16 targetClaimed; // ID of the claimed target
-std_msgs::Int16 claimedTargetDetected; //ID of the claimed target once it has been detected by gatherer.
+std_msgs::Int16 id_claimed_target;
+std_msgs::Int16 id_claimed_target_once_detected; //ID of the claimed target once it has been detected by gatherer.
 
-bool targetsCollected[256];     // array of booleans indicating whether each target ID has been found and delivered;  not used at this time.
-bool targetsDetected[256];      // array of booleans indicating whether each target ID has been found
-bool targetsAvailable[256];     // array of booleans indicating whether each target ID has not been claimed by a collector.
-bool targetsAvailDetected[256]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
-bool targetsHome[256]; // array of booleans indicating wheter each target ID has been delivered to home base.
-geometry_msgs::Pose2D targetPositions[256];
+bool targets_collected[256];     // array of booleans indicating whether each target ID has been found and delivered;  not used at this time.
+bool targets_detected[256];      // array of booleans indicating whether each target ID has been found
+bool targets_available[256];     // array of booleans indicating whether each target ID has not been claimed by a collector.
+bool targets_available_detected[256]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
+bool targets_home[256]; // array of booleans indicating wheter each target ID has been delivered to home base.
+pose target_positions[256];
 
-// achilles random search
-const int RANDOM_SIZE = 3;
-const double MAX_LINEAR_VELOCITY = 0.2;
-const double MAX_ANGULAR_VELOCITY = 0.3;
-vector <geometry_msgs::Pose2D> achilles_waypoints;
 
 // ajax and aeneas waypoints, lawnmower search
 const int LAWNMOWER_SIZE_1 = 22; //29JTI must change this to match size of waypoints_x.  Why??
 const int LAWNMOWER_SIZE_2 = 35;
-//float waypoints_x [] = {6.5, 6.5, -6.5, -6.5, 6, 6, -6.5, -6.5, 6, 6, -6.5, -6.5, 6, 6, -6.5, -6.5, 6, 6, -6.5, -6.5, 6, 6, -6.5, -6.5, 6, 6, -6.5, -6.5,0,0};
-//float waypoints_y [] = {0, 6.5, 6.5, 6, 6, 5.5, 5.5, 5, 5, 4.5, 4.5, 4, 4, 3.5, 3.5, 3, 3, 2.5, 2.5, 2, 2, 1.5, 1.5, 1, 1, .5, .5, 0,0,0};
-//float waypoints_x [] = {7.0, 7.0, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, -7.0, -7.0, 6.5, 6.5, 0};
-//float waypoints_y [] = {  0, 7.0,  7.0,  6.5, 6.5, 6.0,  6.0,  5.5, 5.5, 5.0,  5.0,  4.5, 4.5,   4,    4,  3.5, 3.5,   3,    3,  2.5, 2.5,   2,    2,  1.5, 1.5,   1,    1,  0.5, 0.5,   0, 0};
 
 const float d = 0.5;
 float waypoints_x [] = {7.5-d, -(7.5-d), -(7.5-d),    7.5-d,   7.5-d, -(7.5-2*d), -(7.5-2*d),    7.5-2*d, 7.5-2*d, -(7.5-3*d), -(7.5-3*d),    7.5-3*d, 7.5-3*d, -(7.5-4*d), -(7.5-4*d),   7.5-4*d, 7.5-4*d, 7.5-4*d, -(7.5-5*d), -(7.5-5*d),    7.5-5*d,    7.5-5*d};
@@ -81,31 +74,18 @@ float waypoints_y [] = {7.5-d,    7.5-d, -(7.5-d), -(7.5-d), 7.5-2*d,    7.5-2*d
 float waypoints_x2 [] = {7.5-5*d, -(7.5-6*d), -(7.5-6*d),    7.5-6*d, 7.5-6*d, 7.5-6*d, -(7.5-7*d), -(7.5-7*d),    7.5-7*d, 7.5-7*d, 7.5-7*d, -(7.5-8*d), -(7.5-8*d),    7.5-8*d, 7.5-8*d, 7.5-8*d, -(7.5-9*d), -(7.5-9*d),   7.5-9*d,   7.5-9*d, 7.5-9*d, -(7.5-10*d), -(7.5-10*d),   7.5-10*d,   7.5-10*d, 7.5-10*d, -(7.5-11*d), -(7.5-11*d),    7.5-11*d, 7.5-11*d, 7.5-11*d, -(7.5-12*d), -(7.5-12*d),    7.5-12*d, 7.5-12*d};
 float waypoints_y2 [] = {7.5-6*d,    7.5-6*d, -(7.5-6*d), -(7.5-6*d), 7.5-7*d, 7.5-7*d,    7.5-7*d, -(7.5-7*d), -(7.5-7*d), 7.5-8*d, 7.5-8*d,    7.5-8*d, -(7.5-8*d), -(7.5-8*d), 7.5-9*d, 7.5-9*d,    7.5-9*d, -(7.5-9*d), -(7.5-9*d), 7.5-10*d, 7.5-10*d,    7.5-10*d, -(7.5-10*d), -(7.5-10*d), 7.5-11*d, 7.5-11*d,    7.5-11*d, -(7.5-11*d), -(7.5-11*d), 7.5-12*d, 7.5-12*d,    7.5-12*d, -(7.5-12*d), -(7.5-12*d), 7.5-13*d};
 
-vector <geometry_msgs::Pose2D> ajax_waypoints;
-vector <geometry_msgs::Pose2D> aeneas_waypoints;
+vector <pose> achilles_waypoints;
+vector <pose> ajax_waypoints;
+vector <pose> aeneas_waypoints;
 
 // ajax and aeneas cluster detection
 int targets_detected_screenshot = 0;
 
-int transitionsToAuto = 0;
-double timeStampTransitionToAuto = 0.0;
+int transitions_to_auto = 0;
+double time_stamp_transition_to_auto = 0.0;
 
 // sorted queue
-vector <geometry_msgs::Pose2D> queue;
-
-// theta PID controller - rotate
-double r_theta_error = 0;
-double r_theta_error_prior = 0;
-double r_theta_integral = 0;
-
-// theta PID controller - translate
-double t_theta_error = 0;
-double t_theta_error_prior = 0;
-double t_theta_integral = 0;
-
-double velocity_error = 0;
-double velocity_error_prior = 0;
-double velocity_integral = 0;
+vector <pose> queue;
 
 #define LOGIC_INIT          0
 #define LOGIC_SEARCH        1
@@ -121,14 +101,12 @@ double velocity_integral = 0;
 #define STATE_MACHINE_EXPLORE_NEARBY 7
 #define STATE_MACHINE_CHANGE_MODE 8
 #define STATE_MACHINE_RANDOM_SEARCH 9
-#define STATE_MACHINE_RESET_ROTATE_PID 10
-#define STATE_MACHINE_RESET_TRANSLATE_PID 11
-#define STATE_MACHINE_EXPLORE_NEAR_ORIGIN 12
-int stateMachineState = STATE_MACHINE_INITIALIZE;
+#define STATE_MACHINE_EXPLORE_NEAR_ORIGIN 10
+int state_machine_state = STATE_MACHINE_INITIALIZE;
 
 #define MODE_SEARCHER 0 // mode variable for rovers which will be used to perform lawnmower search.
 #define MODE_COLLECTOR 1 // mode variable for rovers which will be used to perform random search and collect tags found by lawnmower searcher.
-int roverCurrentMode = MODE_SEARCHER; // initiall set all rovers to be collectors
+int rover_current_mode = MODE_SEARCHER; // initiall set all rovers to be collectors
 
 #define CAPACITY_EMPTY 0 // indicates that rover has not claimed and is not carrying april tag
 #define CAPACITY_CLAIMED 1 // indicates that rover has claimed an april tag, but hasn't found it yet.
@@ -143,7 +121,6 @@ ros::Publisher targetCollectedPublish;
 ros::Publisher targetPickUpPublish;
 ros::Publisher targetDropOffPublish;
 ros::Publisher angular_publisher;
-
 ros::Publisher messagePublish;
 
 //Subscribers
@@ -170,9 +147,7 @@ void sigintEventHandler(int signal);
 void joyCmdHandler(const geometry_msgs::Twist::ConstPtr &message);
 void modeHandler(const std_msgs::UInt8::ConstPtr &message);
 void targetHandler(const shared_messages::TagsImage::ConstPtr &tagInfo);
-
 void obstacleHandler(const std_msgs::UInt8::ConstPtr &message); // 
-
 void odometryHandler(const nav_msgs::Odometry::ConstPtr &message);
 void mobilityStateMachine(const ros::TimerEvent &);
 void publishStatusTimerEventHandler(const ros::TimerEvent &event);
@@ -181,16 +156,10 @@ void killSwitchTimerEventHandler(const ros::TimerEvent &event);
 void messageHandler(const std_msgs::String::ConstPtr &message);
 
 //Utility functions
-double computeGoalTheta(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation);
-double computeDistanceToGoal(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation);
+double computeGoalTheta(pose goal_location, pose current_location);
+double computeDistanceBetweenWaypoints(pose final_location, pose start_location);
 void setGoalLocation(double goalLocationX, double goalLocationY);
-double velocityPID(double KP, double KI, double KD);
-double r_thetaPID(double KP, double KI, double KD);
-double t_thetaPID(double KP, double KI, double KD);
-
-
 int searchQueue();
-
 void debugWaypoints();
 void debugRotate();
 void debugTranslate(double distance_);
@@ -220,80 +189,78 @@ int main(int argc, char **argv)
 
     rng = new random_numbers::RandomNumberGenerator(); // instantiate random number generator
 
-    targetClaimed.data = -1; // initialize target claimed
-    claimedTargetDetected.data = -1; // intially the gatherer has no claimed targets so -1 indicates that the gatherer is either looking for a claimed target or there is no current claimed target.
+    id_claimed_target.data = -1; // initialize target claimed
+    id_claimed_target_once_detected.data = -1; // intially the gatherer has no claimed targets so -1 indicates that the gatherer is either looking for a claimed target or there is no current claimed target.
 
     if (argc >= 2)
     {
-        roverName = argv[1];
-        cout << "Welcome to the world of tomorrow " << roverName << "!  Mobility module started." << endl;
+        rover_name = argv[1];
+        cout << "Welcome to the world of tomorrow " << rover_name << "!  Mobility module started." << endl;
     } else
     {
-        roverName = hostName;
-        cout << "No Name Selected. Default is: " << roverName << endl;
+        rover_name = hostName;
+        cout << "No Name Selected. Default is: " << rover_name << endl;
     }
 
     // NoSignalHandler so we can catch SIGINT ourselves and shutdown the node
-    ros::init(argc, argv, (roverName + "_MOBILITY"), ros::init_options::NoSigintHandler);
+    ros::init(argc, argv, (rover_name + "_MOBILITY"), ros::init_options::NoSigintHandler);
     ros::NodeHandle mNH;
 
     signal(SIGINT, sigintEventHandler); // Register the SIGINT event handler so the node can shutdown properly
 
-    joySubscriber = mNH.subscribe((roverName + "/joystick"), 10, joyCmdHandler);
-    modeSubscriber = mNH.subscribe((roverName + "/mode"), 1, modeHandler);
-    targetSubscriber = mNH.subscribe((roverName + "/targets"), 10, targetHandler);
-    obstacleSubscriber = mNH.subscribe((roverName + "/obstacle"), 10, obstacleHandler);
-    odometrySubscriber = mNH.subscribe((roverName + "/odom/ekf"), 10, odometryHandler);
+    joySubscriber = mNH.subscribe((rover_name + "/joystick"), 10, joyCmdHandler);
+    modeSubscriber = mNH.subscribe((rover_name + "/mode"), 1, modeHandler);
+    targetSubscriber = mNH.subscribe((rover_name + "/targets"), 10, targetHandler);
+    obstacleSubscriber = mNH.subscribe((rover_name + "/obstacle"), 10, obstacleHandler);
+    odometrySubscriber = mNH.subscribe((rover_name + "/odom/ekf"), 10, odometryHandler);
     targetsCollectedSubscriber = mNH.subscribe(("targetsCollected"), 10, targetsCollectedHandler);
     messageSubscriber = mNH.subscribe(("messages"), 10, messageHandler);
 
-    status_publisher = mNH.advertise<std_msgs::String>((roverName + "/status"), 1, true);
-    velocityPublish = mNH.advertise<geometry_msgs::Twist>((roverName + "/velocity"), 10);
-    stateMachinePublish = mNH.advertise<std_msgs::String>((roverName + "/state_machine"), 1, true);
+    status_publisher = mNH.advertise<std_msgs::String>((rover_name + "/status"), 1, true);
+    velocityPublish = mNH.advertise<geometry_msgs::Twist>((rover_name + "/velocity"), 10);
+    stateMachinePublish = mNH.advertise<std_msgs::String>((rover_name + "/state_machine"), 1, true);
     targetCollectedPublish = mNH.advertise<std_msgs::Int16>(("targetsCollected"), 1, true);
     messagePublish = mNH.advertise<std_msgs::String>(("messages"), 10, true);
-    targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetPickUpImage"), 1, true);
-    targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((roverName + "/targetDropOffImage"), 1, true);
-    angular_publisher = mNH.advertise<std_msgs::String>((roverName + "/angular"),1,true);
+    targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetPickUpImage"), 1, true);
+    targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetDropOffImage"), 1, true);
+    angular_publisher = mNH.advertise<std_msgs::String>((rover_name + "/angular"),1,true);
     publish_status_timer = mNH.createTimer(ros::Duration(status_publish_interval), publishStatusTimerEventHandler);
-    killSwitchTimer = mNH.createTimer(ros::Duration(killSwitchTimeout), killSwitchTimerEventHandler);
-    stateMachineTimer = mNH.createTimer(ros::Duration(mobilityLoopTimeStep), mobilityStateMachine);
+    killSwitchTimer = mNH.createTimer(ros::Duration(kill_switch_timeout), killSwitchTimerEventHandler);
+    stateMachineTimer = mNH.createTimer(ros::Duration(mobility_loop_time_step), mobilityStateMachine);
 
     for(int i = 0; i < 256; i++)
     {
-        targetsAvailable[i] = true;  // initially all targets are available to be claimed although none have been detected yet.
+        targets_available[i] = true;  // initially all targets are available to be claimed although none have been detected yet.
     }
-
     ros::spin();
-
     return EXIT_SUCCESS;
 }
 
 void mobilityStateMachine(const ros::TimerEvent &)
 {
-    std_msgs::String stateMachineMsg;
+    std_msgs::String state_machine_msg;
 
-    if ((simulationMode == 2 || simulationMode == 3)) // Robot is in automode
+    if ((simulation_mode == 2 || simulation_mode == 3)) // Robot is in automode
     {
-        if (transitionsToAuto == 0)
+        if (transitions_to_auto == 0)
         {
             // This is the firt time we have clicked the Autonomous Button. Log the time and increment the counter.
-            transitionsToAuto++;
-            timeStampTransitionToAuto = ros::Time::now().toSec();
+            transitions_to_auto++;
+            time_stamp_transition_to_auto = ros::Time::now().toSec();
         }
-        switch (stateMachineState)
+        switch (state_machine_state)
         {
         case STATE_MACHINE_INITIALIZE:
         {
-            stateMachineMsg.data = "INITIALIZING";
-            if (roverName == "ajax" || roverName == "aeneas") // set mode to searcher
+            state_machine_msg.data = "INITIALIZING";
+            if (rover_name == "ajax" || rover_name == "aeneas") // set mode to searcher
             {
-                roverCurrentMode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
+                rover_current_mode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
 
-                if (roverName == "ajax") // assign waypoints to perform lawnmower
+                if (rover_name == "ajax") // assign waypoints to perform lawnmower
                 {
                     setGoalLocation(waypoints_x[0],waypoints_y[0]);
-                    geometry_msgs::Pose2D nextPosition;
+                    pose nextPosition;
                     for (int i = LAWNMOWER_SIZE_1; i > 0; i--)
                     {
                         nextPosition.x = waypoints_x[i];
@@ -301,14 +268,12 @@ void mobilityStateMachine(const ros::TimerEvent &)
                         ajax_waypoints.push_back(nextPosition);
                     }
                 }
-                else if (roverName == "aeneas") // assign waypoints to perform lawnmower
+                else if (rover_name == "aeneas") // assign waypoints to perform lawnmower
                 {
                     setGoalLocation(waypoints_x2[0],waypoints_y2[0]);
-                    geometry_msgs::Pose2D nextPosition;
+                    pose nextPosition;
                     for (int i = LAWNMOWER_SIZE_2; i > 0; i--)
                     {
-//                        nextPosition.x = (-1)*waypoints_x[i];
-//                        nextPosition.y = (-1)*waypoints_y[i];
                         nextPosition.x = waypoints_x2[i];
                         nextPosition.y = waypoints_y2[i];
                         aeneas_waypoints.push_back(nextPosition);
@@ -317,240 +282,195 @@ void mobilityStateMachine(const ros::TimerEvent &)
             }
             else // all other robots, assign to collect
             {
-                roverCurrentMode = MODE_COLLECTOR;
-                setGoalLocation(currentLocation.x,currentLocation.y);
+                rover_current_mode = MODE_COLLECTOR;
+                setGoalLocation(current_location.x,current_location.y);
             }
-            stateMachineState = STATE_MACHINE_ROTATE;
+            state_machine_state = STATE_MACHINE_ROTATE;
             break;
         }
         case STATE_MACHINE_ROTATE:
         {
             float angular_velocity = 0.0;
             float random_velocity = rng->uniformReal(-.02, 0.02);
-            if (abs(angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta)) > 0.25)
+            if (abs(angles::shortest_angular_distance(current_location.theta, goal_location.theta)) > 0.25)
             {
-                angular_velocity = rotational_controller.calculateVelocity(currentLocation, goalLocation);
-//                setVelocity(random_velocity, angular_velocity);//add a little bit of random linear-velocity to make turns less sticky
+                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
+                setVelocity(random_velocity, angular_velocity);//add a little bit of random linear-velocity to make turns less sticky
             }
             else
             {
                 angular_velocity = 0.0;
-//                setVelocity(0.0, angular_velocity); // stop
-//                stateMachineState = STATE_MACHINE_RESET_TRANSLATE_PID; // move to translate step
+                setVelocity(0.0, angular_velocity); // stop
+                state_machine_state = STATE_MACHINE_TRANSLATE; // move to translate step
             }
             std::stringstream converter;
-            converter << angles::shortest_angular_distance(currentLocation.theta, goalLocation.theta) << ", " << angular_velocity;
+            converter << rotational_controller.getCurrentError() << ", " << angular_velocity << ", " << angles::shortest_angular_distance(current_location.theta, goal_location.theta);
             std_msgs::String message;
-            message.data = "ANGULAR INFO: " + converter.str();
+            message.data = "AANGULAR INFO: " + converter.str();
             angular_publisher.publish(message);
-            stateMachineState = STATE_MACHINE_ROTATE;
-            stateMachineMsg.data = "ROTATING";
-            break;
-        }
-        case STATE_MACHINE_RESET_TRANSLATE_PID:
-        {
-            stateMachineMsg.data = "RESETTING TRANSLATE PID";
-            t_theta_integral = 0;
-            velocity_integral = 0;
-//            pidController.resetDistanceErrorIntegrator();
-            stateMachineState = STATE_MACHINE_TRANSLATE;
+            state_machine_msg.data = "ROTATING";
             break;
         }
         case STATE_MACHINE_TRANSLATE:
         {
 
-            double angularVelocity = 0.0;
-            double linearVelocity = 0.0;
-
-
-            double distanceToGoal = computeDistanceToGoal(goalLocation, currentLocation);
-            if (distanceToGoal >= 0.25) // if you are not within 25cm of goal
+            double angular_velocity = 0.0;
+            double linear_velocity = 0.0;
+            if (computeDistanceBetweenWaypoints(goal_location, current_location) >= 0.25) // if you are not within 25cm of goal
             {
-                angularVelocity = t_thetaPID(0.50, 0.0, 0.0); // needed to keep robot going straight
-                linearVelocity = velocityPID(0.2, 0.0, 0.0);//0.15
-
-                if(angularVelocity > MAX_ANGULAR_VELOCITY)
-                {
-                    angularVelocity = MAX_ANGULAR_VELOCITY;
-                }
-                else if(angularVelocity < -MAX_ANGULAR_VELOCITY)
-                {
-                    angularVelocity = -MAX_ANGULAR_VELOCITY;
-                }
-                double max_Remaining_Velocity = MAX_LINEAR_VELOCITY;//-fabs(angularVelocity); // We can only supply 0.3 total-velocity in total divided between angular and linear.  Give priorty to angular.
-                if(linearVelocity > max_Remaining_Velocity)
-                {
-                    linearVelocity = max_Remaining_Velocity;
-                }
-                else if (linearVelocity < -max_Remaining_Velocity)
-                {
-                    linearVelocity = -max_Remaining_Velocity;
-                }
-                setVelocity(linearVelocity, angularVelocity);
-                //stateMachineState = STATE_MACHINE_TRANSLATE; // added just for readability.  We repeat this state until we reach goal location.
+                linear_velocity = translational_controller.calculateVelocity(current_location, goal_location);
+                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
+                setVelocity(linear_velocity, angular_velocity);
             }
             else
             {
-                angularVelocity = 0.0;
-                linearVelocity = 0.0;
-                setVelocity(linearVelocity, angularVelocity);
-
+                angular_velocity = 0.0;
+                linear_velocity = 0.0;
+                setVelocity(linear_velocity, angular_velocity);
                 // This is where the magic happens.  We must decide what to do once we have reached the desired location.
                 if ( avoiding_obstacle )
                 {
                     // this is part of assigning new goal, but it is taking into consideration, obstacles
                     avoiding_obstacle = false;
-
-                    while (savedPositions.size() > 1)
+                    while (saved_positions.size() > 1)
                     {
-                        savedPositions.pop_back();
+                        saved_positions.pop_back();
                     }
-
-                    goalLocation.x = savedPositions.back().x;
-                    goalLocation.y = savedPositions.back().y;
-                    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-                    //                    pivot();
-                    savedPositions.pop_back();
-                    stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+                    goal_location.x = saved_positions.back().x;
+                    goal_location.y = saved_positions.back().y;
+                    goal_location.theta = computeGoalTheta(goal_location, current_location);
+                    saved_positions.pop_back();
+                    state_machine_state =STATE_MACHINE_ROTATE;
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "ajax") && (ajax_waypoints.size() > 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && (ajax_waypoints.size() > 0) )
                 {
-                    stateMachineState = STATE_MACHINE_POP_WAYPOINT; // We are ajax and we are currently searching with remaining waypoints
+                    state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are ajax and we are currently searching with remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "aeneas") && (aeneas_waypoints.size() > 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && (aeneas_waypoints.size() > 0) )
                 {
-                    stateMachineState = STATE_MACHINE_POP_WAYPOINT; // We are aeneas and we are currently searching with remaining waypoints
+                    state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are aeneas and we are currently searching with remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "ajax") && (ajax_waypoints.size() <= 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && (ajax_waypoints.size() <= 0) )
                 {
-                    stateMachineState = STATE_MACHINE_CHANGE_MODE; // We are ajax and we are currently searching with no remaining waypoints
+                    state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are ajax and we are currently searching with no remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_SEARCHER) && (roverName == "aeneas") && (aeneas_waypoints.size() <= 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && (aeneas_waypoints.size() <= 0) )
                 {
-                    stateMachineState = STATE_MACHINE_CHANGE_MODE; // We are aeneas and we are currently searching with no remaining waypoints
+                    state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are aeneas and we are currently searching with no remaining waypoints
                 }
-                else if ( (roverCurrentMode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CLAIMED) )
+                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CLAIMED) )
                 {
-                    stateMachineState = STATE_MACHINE_EXPLORE_NEARBY; // We have gone to where we thought the target should be but didn't find it there.
+                    state_machine_state = STATE_MACHINE_EXPLORE_NEARBY; // We have gone to where we thought the target should be but didn't find it there.
                 }
-                else if ( (roverCurrentMode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
+                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
                 {
-                    stateMachineState = STATE_MACHINE_CHANGE_MODE;
+                    state_machine_state = STATE_MACHINE_CHANGE_MODE;
                 }
-                else if ( (roverCurrentMode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CARRYING) )
+                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CARRYING) )
                 {
-                    stateMachineState = STATE_MACHINE_EXPLORE_NEAR_ORIGIN; // We have gone to where we thought the origin should be but didn't find it there.
+                    state_machine_state = STATE_MACHINE_EXPLORE_NEAR_ORIGIN; // We have gone to where we thought the origin should be but didn't find it there.
                 }
             }
-            std::stringstream converter;
-//            converter <<
-//                         "Distance: " << distanceToGoal << " AngularVel: " << angularVelocity << " LinearVel: " << linearVelocity << " GoalLocationX: " << goalLocation.x << " CurrentLocationX: " << currentLocation.x << " GoalLocationY: " << goalLocation.y << " CurrentLocationY: " << currentLocation.y;
-            converter <<
-                         "G_T: " << goalLocation.theta << " C_T: " << currentLocation.theta << " A_V: " << angularVelocity << " Dist: " << distanceToGoal << " L_V: " << linearVelocity << " G_X: " << goalLocation.x << " G_Y: " << goalLocation.y;
-
-            stateMachineMsg.data = "TRANSLATING";//, " + converter.str();
+            state_machine_msg.data = "TRANSLATING";//, " + converter.str();
             break;
         }
         case STATE_MACHINE_POP_WAYPOINT:
         {
-            stateMachineMsg.data = "POPPING WAYPOINT";
-            if (roverName == "ajax")
+            state_machine_msg.data = "POPPING WAYPOINT";
+            if (rover_name == "ajax")
             {
-                goalLocation.x = ajax_waypoints.back().x;
-                goalLocation.y = ajax_waypoints.back().y;
-                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
+                goal_location.x = ajax_waypoints.back().x;
+                goal_location.y = ajax_waypoints.back().y;
+                goal_location.theta = computeGoalTheta(goal_location, current_location);
                 ajax_waypoints.pop_back();
             }
-            if (roverName == "aeneas")
+            if (rover_name == "aeneas")
             {
-                goalLocation.x = aeneas_waypoints.back().x;
-                goalLocation.y = aeneas_waypoints.back().y;
-                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
+                goal_location.x = aeneas_waypoints.back().x;
+                goal_location.y = aeneas_waypoints.back().y;
+                goal_location.theta = computeGoalTheta(goal_location, current_location);
                 aeneas_waypoints.pop_back();
             }
-            stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+            state_machine_state = STATE_MACHINE_ROTATE;
             break;
         }
         case STATE_MACHINE_CHANGE_MODE:
         {
-            stateMachineMsg.data = "CHANGING MODE";
-            roverCurrentMode = MODE_COLLECTOR; // change mode from lawnmower searcher to collector.
-            stateMachineState = STATE_MACHINE_CLAIM_TARGET;
+            state_machine_msg.data = "CHANGING MODE";
+            rover_current_mode = MODE_COLLECTOR; // change mode from lawnmower searcher to collector.
+            state_machine_state = STATE_MACHINE_CLAIM_TARGET;
             break;
         }
         case STATE_MACHINE_EXPLORE_NEARBY:
         {
-            stateMachineMsg.data = "EXPORING NEARBY";
-            if (targetsHome[targetClaimed.data])
+            state_machine_msg.data = "EXPORING NEARBY";
+            if (targets_home[id_claimed_target.data])
             {
                 // This means that someone else has taken this target home alread, so something went wrong.  Drop it and claim a new target.
-                stateMachineState = STATE_MACHINE_CLAIM_TARGET;
+                state_machine_state = STATE_MACHINE_CLAIM_TARGET;
             }
             else
             {
                 // It must be around here somewhere.  Keep searching for it.
                 double r = rng->uniformReal(0.0, 1.0);
                 double t = rng->uniformReal(0, 2 * M_PI);
-                goalLocation.x = targetPositions[targetClaimed.data].x + r * cos(t); // Explore in a 1m circle around where you think the target is located.
-                goalLocation.y = targetPositions[targetClaimed.data].y + r * sin(t);
-                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-                stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+                goal_location.x = target_positions[id_claimed_target.data].x + r * cos(t); // Explore in a 1m circle around where you think the target is located.
+                goal_location.y = target_positions[id_claimed_target.data].y + r * sin(t);
+                goal_location.theta = computeGoalTheta(goal_location, current_location);
+                state_machine_state = STATE_MACHINE_ROTATE;
             }
             break;
         }
         case STATE_MACHINE_RETURN_HOME:
         {
-            stateMachineMsg.data = "RETURNING TO HOME";
-            // set angle to center as goal heading
-            goalLocation.theta = M_PI + atan2(currentLocation.y, currentLocation.x);
-            // set center as goal position
-            goalLocation.x = 0.0;
-            goalLocation.y = 0.0;
-            stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+            state_machine_msg.data = "RETURNING TO HOME";
+            goal_location.x = 0.0;
+            goal_location.y = 0.0;
+            goal_location.theta = computeGoalTheta(goal_location, current_location);
+            state_machine_state = STATE_MACHINE_ROTATE;
             break;
-            // Comment
         }
         case STATE_MACHINE_CLAIM_TARGET:
         {
-            stateMachineMsg.data = "CLAIMING TARGET";
+            state_machine_msg.data = "CLAIMING TARGET";
             int result = searchQueue(); // search targets detected and avialble
             if(result != -1)
             {
                 claimResource(result); // update targets detected and available array
-                targetClaimed.data = result; // This should be where targetClaimed gets set.
+                id_claimed_target.data = result; // This should be where targetClaimed gets set.
                 roverCapacity=CAPACITY_CLAIMED; // Update status of rover
-                goalLocation.x = targetPositions[result].x;
-                goalLocation.y = targetPositions[result].y;
-                goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-                stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+                goal_location.x = target_positions[result].x;
+                goal_location.y = target_positions[result].y;
+                goal_location.theta = computeGoalTheta(goal_location, current_location);
+                state_machine_state = STATE_MACHINE_ROTATE;
             }
             else
             {
-                stateMachineState = STATE_MACHINE_RANDOM_SEARCH;
+                state_machine_state = STATE_MACHINE_RANDOM_SEARCH;
             }
             break;
         }
         case STATE_MACHINE_RANDOM_SEARCH:
         {
-            stateMachineMsg.data = "RANDOMLY SEARCHING";
+            state_machine_msg.data = "RANDOMLY SEARCHING";
             visitRandomLocation();
-            stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+            state_machine_state = STATE_MACHINE_ROTATE;
             break;
         }
         case STATE_MACHINE_EXPLORE_NEAR_ORIGIN:
         {
-            stateMachineMsg.data = "EXPORING NEAR ORIGIN";
+            state_machine_msg.data = "EXPORING NEAR ORIGIN";
             double r = rng->uniformReal(0.0, 1);
             double t = rng->uniformReal(0, 2 * M_PI);
-            goalLocation.x = 0.0 + r * cos(t); // Explore in a 1m circle around where you think the target is located.
-            goalLocation.y = 0.0 + r * sin(t);
-            goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-            stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+            goal_location.x = 0.0 + r * cos(t); // Explore in a 1m circle around where you think the target is located.
+            goal_location.y = 0.0 + r * sin(t);
+            goal_location.theta = computeGoalTheta(goal_location, current_location);
+            state_machine_state = STATE_MACHINE_ROTATE;
             break;
         }
         default:
         {
-            stateMachineMsg.data = "DEFAULT CASE: SOMETHING WRONG!!!!";
+            state_machine_msg.data = "DEFAULT CASE: SOMETHING WRONG!!!!";
             break;
         }
         }
@@ -561,9 +481,9 @@ void mobilityStateMachine(const ros::TimerEvent &)
 
         // publish current state for the operator to see
         std::stringstream converter;
-        converter <<"CURRENT MODE: " << simulationMode;
+        converter <<"CURRENT MODE: " << simulation_mode;
 
-        stateMachineMsg.data = "WAITING, " + converter.str();
+        state_machine_msg.data = "WAITING, " + converter.str();
     }
 }
 
@@ -571,7 +491,7 @@ void setVelocity(double linearVel, double angularVel)
 {
     geometry_msgs::Twist velocity;
     // Stopping and starting the timer causes it to start counting from 0 again.
-    // As long as this is called before the kill swith timer reaches killSwitchTimeout seconds
+    // As long as this is called before the kill swith timer reaches kill_switch_timeout seconds
     // the rover's kill switch wont be called.
     killSwitchTimer.stop();
     killSwitchTimer.start();
@@ -590,16 +510,16 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
     for(int i = 0; i < message->tags.data.size(); i++)
     {
         //check if target has not yet been collected
-        if ( message->tags.data[i] == 256 || !targetsHome[message->tags.data[i]] )
+        if ( message->tags.data[i] == 256 || !targets_home[message->tags.data[i]] )
         {
             // We have encountered a target that is either the home location (256) or is a target that we haven't dropped off yet.
-            if ( roverCurrentMode==MODE_COLLECTOR && (message->tags.data[i] == 256) && roverCapacity==CAPACITY_CARRYING )
+            if ( rover_current_mode==MODE_COLLECTOR && (message->tags.data[i] == 256) && roverCapacity==CAPACITY_CARRYING )
             {
                 // We are a collector, we are carrying a target, and we reached home base
                 // This is actually the STATE_MACHINE_SCORE_TARGET state, but it now lives inside the target handler.
 
                 setVelocity(0.0,0.0); // stop the rover
-                homeResource(targetClaimed.data); // deliver the id of the target that you were carrying.
+                homeResource(id_claimed_target.data); // deliver the id of the target that you were carrying.
                 //publish to scoring code
                 targetDropOffPublish.publish(message->image); // publish the image that you are dropping off so it can be scored.
 
@@ -607,75 +527,75 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
                 roverCapacity=CAPACITY_EMPTY; // set the capacity of this rover back to empty
 
-                targetClaimed.data = -1; // we no longer have a claimed target so we need to claim a new target.
+                id_claimed_target.data = -1; // we no longer have a claimed target so we need to claim a new target.
 
-                stateMachineState = STATE_MACHINE_CLAIM_TARGET;
+                state_machine_state = STATE_MACHINE_CLAIM_TARGET;
             }
-            else if (!(message->tags.data[i] == 256) && roverCurrentMode==MODE_COLLECTOR && (message->tags.data[i]==targetClaimed.data) && roverCapacity==CAPACITY_CLAIMED)
+            else if (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]==id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
             {
                 // We have found the claimed target, so we need to pick it up and return to home.
                 setVelocity(0.0,0.0); // stop the rover
                 roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
 
                 // copy target ID to class variable
-                claimedTargetDetected.data = message->tags.data[i];
+                id_claimed_target_once_detected.data = message->tags.data[i];
                 // publish to scoring code
                 targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                 // publish detected target
-                targetCollectedPublish.publish(claimedTargetDetected);
-                stateMachineState = STATE_MACHINE_RETURN_HOME;
+                targetCollectedPublish.publish(id_claimed_target_once_detected);
+                state_machine_state = STATE_MACHINE_RETURN_HOME;
             }
-            else if  (!(message->tags.data[i] == 256) && roverCurrentMode==MODE_COLLECTOR && (message->tags.data[i]!=targetClaimed.data) && roverCapacity==CAPACITY_CLAIMED)
+            else if  (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]!=id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
             {
                 // we have found a target that isn't the one we claimed.  We need to unclaim the one we have and claim a new one.
-                if (targetsAvailDetected[message->tags.data[i]])
+                if (targets_available_detected[message->tags.data[i]])
                 {
                     // here we need to unclaim our original and claim this one.
                     setVelocity(0.0,0.0); // stop the rover
                     roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
 
-                    unclaimResource(targetClaimed.data);
+                    unclaimResource(id_claimed_target.data);
 
                     claimResource(message->tags.data[i]); // update targets detected and available array
-                    targetClaimed.data = message->tags.data[i]; // This should be where targetClaimed gets set.
+                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
 
 
-                    claimedTargetDetected.data = message->tags.data[i];
+                    id_claimed_target_once_detected.data = message->tags.data[i];
                     // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     // publish detected target
-                    targetCollectedPublish.publish(claimedTargetDetected);
+                    targetCollectedPublish.publish(id_claimed_target_once_detected);
                     // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    stateMachineState = STATE_MACHINE_RETURN_HOME;
+                    state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
-                else if ( !targetsDetected[message->tags.data[i]] )
+                else if ( !targets_detected[message->tags.data[i]] )
                 {
                     // here we need to unclaim our original, then reportDectected and claim this one.
                     setVelocity(0.0,0.0); // stop the rover
                     roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
 
-                    unclaimResource(targetClaimed.data);
+                    unclaimResource(id_claimed_target.data);
 
                     std_msgs::Int16 tag;
                     tag.data = message->tags.data[i];
                     reportDetected(tag);
 
                     claimResource(message->tags.data[i]); // update targets detected and available array
-                    targetClaimed.data = message->tags.data[i]; // This should be where targetClaimed gets set.
+                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
 
 
-                    claimedTargetDetected.data = message->tags.data[i];
+                    id_claimed_target_once_detected.data = message->tags.data[i];
                     // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     // publish detected target
-                    targetCollectedPublish.publish(claimedTargetDetected);
+                    targetCollectedPublish.publish(id_claimed_target_once_detected);
                     // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    stateMachineState = STATE_MACHINE_RETURN_HOME;
+                    state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
             }
-            else if (!(message->tags.data[i] == 256) && roverCurrentMode==MODE_COLLECTOR && roverCapacity==CAPACITY_EMPTY) // we have found a target
+            else if (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && roverCapacity==CAPACITY_EMPTY) // we have found a target
             {
-                if (targetsAvailDetected[message->tags.data[i]])
+                if (targets_available_detected[message->tags.data[i]])
                 {
                     // here we need to claim this one.
                     setVelocity(0.0,0.0); // stop the rover
@@ -683,18 +603,18 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
 
                     claimResource(message->tags.data[i]); // update targets detected and available array
-                    targetClaimed.data = message->tags.data[i]; // This should be where targetClaimed gets set.
+                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
 
 
-                    claimedTargetDetected.data = message->tags.data[i];
+                    id_claimed_target_once_detected.data = message->tags.data[i];
                     // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     // publish detected target
-                    targetCollectedPublish.publish(claimedTargetDetected);
+                    targetCollectedPublish.publish(id_claimed_target_once_detected);
                     // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    stateMachineState = STATE_MACHINE_RETURN_HOME;
+                    state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
-                else if ( !targetsDetected[message->tags.data[i]] )
+                else if ( !targets_detected[message->tags.data[i]] )
                 {
                     // here we need to reportDectected and claim this one.
                     setVelocity(0.0,0.0); // stop the rover
@@ -706,19 +626,19 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
 
                     claimResource(message->tags.data[i]); // update targets detected and available array
-                    targetClaimed.data = message->tags.data[i]; // This should be where targetClaimed gets set.
+                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
 
 
-                    claimedTargetDetected.data = message->tags.data[i];
+                    id_claimed_target_once_detected.data = message->tags.data[i];
                     // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     // publish detected target
-                    targetCollectedPublish.publish(claimedTargetDetected);
+                    targetCollectedPublish.publish(id_claimed_target_once_detected);
                     // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    stateMachineState = STATE_MACHINE_RETURN_HOME;
+                    state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
             }
-            else if ( !targetsDetected[message->tags.data[i]] ) //we have encountered a tag that has not been detected yet and we are in Search Mode.  Report it.
+            else if ( !targets_detected[message->tags.data[i]] ) //we have encountered a tag that has not been detected yet and we are in Search Mode.  Report it.
             {
                 std_msgs::Int16 tag;
                 tag.data = message->tags.data[i];
@@ -730,51 +650,46 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
 void modeHandler(const std_msgs::UInt8::ConstPtr &message)
 {
-    simulationMode = message->data;
+    simulation_mode = message->data;
     setVelocity(0.0, 0.0);
 }
 
 void obstacleHandler(const std_msgs::UInt8::ConstPtr &message)
 {
-    if ( (message->data > 0) && roverCurrentMode==MODE_COLLECTOR ) //!(avoiding_obstacle)
+    if ( (message->data > 0) && rover_current_mode==MODE_COLLECTOR ) //!(avoiding_obstacle)
     {
 //        setVelocity(0.0,0.0); // stop the rover
-        if ( (roverCapacity==CAPACITY_CARRYING) && (angles::shortest_angular_distance(currentLocation.theta, atan2(-currentLocation.y, -currentLocation.x)) < M_PI_2) )
+        if ( (roverCapacity==CAPACITY_CARRYING) && (angles::shortest_angular_distance(current_location.theta, atan2(-current_location.y, -current_location.x)) < M_PI_2) )
         {
             setVelocity(-0.2,0.0);
             // we are going to the goal with a target.  Just wait till the other guy moves out of our way.
-            geometry_msgs::Pose2D savedPosition;
+            pose savedPosition;
 
-            savedPosition.x = goalLocation.x;
-            savedPosition.y = goalLocation.y;
-            savedPosition.theta = goalLocation.theta;
-
-            savedPositions.push_back(savedPosition);
+            savedPosition.x = goal_location.x;
+            savedPosition.y = goal_location.y;
+            savedPosition.theta = goal_location.theta;
+            saved_positions.push_back(savedPosition);
 
             //try not to move.
-            goalLocation.x = currentLocation.x;
-            goalLocation.y = currentLocation.y;
-            goalLocation.theta = currentLocation.theta;
-
-
+            goal_location.x = current_location.x;
+            goal_location.y = current_location.y;
+            goal_location.theta = current_location.theta;
         }
         else
         {
             setVelocity(-0.2,0.0);
             // we are not delivering a target so lets get out of the way.
-            geometry_msgs::Pose2D savedPosition;
-
-            savedPosition.x = goalLocation.x;
-            savedPosition.y = goalLocation.y;
-            savedPosition.theta = goalLocation.theta;
-
-            savedPositions.push_back(savedPosition);
+            pose savedPosition;
+            savedPosition.x = goal_location.x;
+            savedPosition.y = goal_location.y;
+            savedPosition.theta = goal_location.theta;
+            saved_positions.push_back(savedPosition);
 
             //obstacle on right side
             if (message->data == 1)
             {
                 //select new heading 0.2 radians to the left
-                goalLocation.theta = currentLocation.theta + 0.78; //0.78
+                goal_location.theta = current_location.theta + 0.78; //0.78
 //                setVelocity(0.2,-0.3);
             }
 
@@ -782,32 +697,32 @@ void obstacleHandler(const std_msgs::UInt8::ConstPtr &message)
             else if (message->data == 2)
             {
                 //select new heading 0.2 radians to the right
-                goalLocation.theta = currentLocation.theta - 0.78; //0.78
+                goal_location.theta = current_location.theta - 0.78; //0.78
 //                setVelocity(0.2,0.3);
             }
             else
             {
                 //select new heading 0.2 radians to the left
-                goalLocation.theta = currentLocation.theta + 0.78; //0.78
+                goal_location.theta = current_location.theta + 0.78; //0.78
 //                setVelocity(0.2,-0.3);
             }
 
             //select new position 0.50 m from current location
-            goalLocation.x = currentLocation.x + (0.75 * cos(goalLocation.theta));
-            goalLocation.y = currentLocation.y + (0.75 * sin(goalLocation.theta));
+            goal_location.x = current_location.x + (0.75 * cos(goal_location.theta));
+            goal_location.y = current_location.y + (0.75 * sin(goal_location.theta));
         }
         avoiding_obstacle = true;
 
         //switch to reset rotate pid to trigger collision avoidance
-        stateMachineState = STATE_MACHINE_RESET_ROTATE_PID;
+        state_machine_state = STATE_MACHINE_ROTATE;
     }
 }
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr &message)
 {
     //Get (x,y) location directly from pose
-    currentLocation.x = message->pose.pose.position.x;
-    currentLocation.y = message->pose.pose.position.y;
+    current_location.x = message->pose.pose.position.x;
+    current_location.y = message->pose.pose.position.y;
 
     //Get theta rotation by converting quaternion orientation to pitch/roll/yaw
     tf::Quaternion q(message->pose.pose.orientation.x, message->pose.pose.orientation.y,
@@ -815,12 +730,12 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr &message)
     tf::Matrix3x3 m(q);
     double roll, pitch, yaw;
     m.getRPY(roll, pitch, yaw);
-    currentLocation.theta = yaw;
+    current_location.theta = yaw;
 }
 
 void joyCmdHandler(const geometry_msgs::Twist::ConstPtr &message)
 {
-    if (simulationMode == 0 || simulationMode == 1)
+    if (simulation_mode == 0 || simulation_mode == 1)
     {
         setVelocity(message->linear.x, message->angular.z);
     }
@@ -828,13 +743,13 @@ void joyCmdHandler(const geometry_msgs::Twist::ConstPtr &message)
 
 void publishStatusTimerEventHandler(const ros::TimerEvent &)
 {
-    if (!publishedName)
+    if (!published_name)
     {
         std_msgs::String name_msg;
         name_msg.data = "I ";
-        name_msg.data = name_msg.data + roverName;
+        name_msg.data = name_msg.data + rover_name;
         messagePublish.publish(name_msg);
-        publishedName = true;
+        published_name = true;
     }
 
     std_msgs::String msg;
@@ -855,7 +770,7 @@ void killSwitchTimerEventHandler(const ros::TimerEvent &t)
 
 void targetsCollectedHandler(const std_msgs::Int16::ConstPtr &message)
 {
-    targetsCollected[message->data] = 1;
+    targets_collected[message->data] = 1;
 }
 
 void sigintEventHandler(int sig)
@@ -864,61 +779,21 @@ void sigintEventHandler(int sig)
     ros::shutdown();
 }
 
-/***********************
- * UTILITY FUNCTIONS
-************************/
-double computeGoalTheta(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation)
+double computeGoalTheta(pose goalLocation, pose currentLocation)
 {
     return atan2(goalLocation.y - currentLocation.y, goalLocation.x - currentLocation.x);
 }
 
-double computeDistanceToGoal(geometry_msgs::Pose2D goalLocation, geometry_msgs::Pose2D currentLocation)
+double computeDistanceBetweenWaypoints(pose final_location, pose start_location)
 {
-    return fabs(sqrt( (pow( (goalLocation.x - currentLocation.x), 2.0)) + (pow( (goalLocation.y - currentLocation.y) , 2.0)) ));
+    return fabs(sqrt(pow(final_location.x - start_location.x, 2.0) + pow((final_location.y - start_location.y), 2.0)));
 }
 
 void setGoalLocation(double goalLocationX, double goalLocationY)
 {
-    goalLocation.x = goalLocationX;
-    goalLocation.y = goalLocationY;
-    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-}
-
-// theta PID controller for rotate state
-double r_thetaPID(double KP, double KI, double KD)
-{
-    r_theta_error = angles::shortest_angular_distance(currentLocation.theta,computeGoalTheta(goalLocation, currentLocation));
-    double theta_error_prime = atan2(sin(r_theta_error), cos(r_theta_error));
-    r_theta_integral = r_theta_integral + theta_error_prime;
-    double theta_derivative = (theta_error_prime - r_theta_error_prior) / mobilityLoopTimeStep;
-    double theta_output = (KP*theta_error_prime) + (KI*r_theta_integral) + (KD*theta_derivative);
-//    r_theta_error_prior = r_theta_error;
-    r_theta_error_prior = theta_error_prime;
-    return theta_output;
-}
-
-// theta PID controller for translate state
-double t_thetaPID(double KP, double KI, double KD)
-{
-//    t_theta_error = goalLocation.theta - currentLocation.theta;
-    t_theta_error = angles::shortest_angular_distance(currentLocation.theta,computeGoalTheta(goalLocation, currentLocation));
-    double theta_error_prime = atan2(sin(t_theta_error), cos(t_theta_error));
-    t_theta_integral = t_theta_integral + theta_error_prime;
-    double theta_derivative = (theta_error_prime - t_theta_error_prior) / mobilityLoopTimeStep;
-    double theta_output = (KP*theta_error_prime) + (KI*t_theta_integral) + (KD*theta_derivative);
-//    t_theta_error_prior = t_theta_error;
-    t_theta_error_prior = theta_error_prime;
-    return theta_output;
-}
-
-double velocityPID(double KP, double KI, double KD)
-{
-    velocity_error = computeDistanceToGoal(goalLocation, currentLocation);
-    velocity_integral = velocity_integral + velocity_error;
-    double velocity_derivative = (velocity_error - velocity_error_prior) / mobilityLoopTimeStep;
-    double velocity_output = (KP*velocity_error) + (KI*velocity_integral) + (KD*velocity_derivative);
-    velocity_error_prior = velocity_error;
-    return velocity_output;
+    goal_location.x = goalLocationX;
+    goal_location.y = goalLocationY;
+    goal_location.theta = computeGoalTheta(goal_location, current_location);
 }
 
 void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
@@ -927,7 +802,7 @@ void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
     int targets_detected_size = 0;
     for(int i = 0; i < 256; i++)
     {
-        if(targetsDetected[i])
+        if(targets_detected[i])
         {
             targets_detected_size++;
         }
@@ -935,12 +810,12 @@ void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
     std::stringstream converter;
     
     converter <<
-                 roverName << " " <<
+                 rover_name << " " <<
                  msg.data << " " <<
-                 currentLocation.x << " " <<
-                 currentLocation.y << " " <<
-                 currentLocation.theta << " " <<
-                 current_time-timeStampTransitionToAuto << " " <<
+                 current_location.x << " " <<
+                 current_location.y << " " <<
+                 current_location.theta << " " <<
+                 current_time-time_stamp_transition_to_auto << " " <<
                  targets_detected_size;
     
     std_msgs::String message;
@@ -952,7 +827,7 @@ void claimResource(int resouceID) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto;
+    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
     std_msgs::String message;
     message.data = "C " + converter.str(); // claim this token for pickup
     messagePublish.publish(message);
@@ -962,7 +837,7 @@ void unclaimResource(int resouceID) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto;
+    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
     std_msgs::String message;
     message.data = "U " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
@@ -975,14 +850,14 @@ void homeResource(int resouceID) // simply publish (broadcast)
 
     for(int i = 0; i < 256; i++)
     {
-        if(targetsHome[i])
+        if(targets_home[i])
         {
             targets_home_size++;
         }
     }
 
     std::stringstream converter;
-    converter << resouceID << " " << roverName << " " << current_time-timeStampTransitionToAuto << " " << targets_home_size;
+    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto << " " << targets_home_size;
     std_msgs::String message;
     message.data = "H " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
@@ -995,10 +870,10 @@ int searchQueue()
     int idClosestTarget = -1;
     for(int resource = 0; resource < 256; resource++)
     {
-        if(targetsAvailDetected[resource])
+        if(targets_available_detected[resource])
         {
 
-            double current_distance = computeDistanceToGoal(targetPositions[resource], currentLocation);
+            double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
             if(current_distance < minDistance)
             {
                 minDistance = current_distance;
@@ -1087,45 +962,15 @@ void detectedMessage(vector<string> msg_parts)
     converter.clear();
 
     // lookup tables
-    targetPositions[tmp.data].x = x + 0.75 * cos(theta); // project forward by 0.5 meters in the direction that the finding rover was facing when the target was detected
-    targetPositions[tmp.data].y = y + 0.75 * sin(theta);
-    targetPositions[tmp.data].theta = theta;
-    targetsDetected[tmp.data] = true;
-    targetsAvailDetected[tmp.data] = targetsDetected[tmp.data] && targetsAvailable[tmp.data];
-    if ( (roverCurrentMode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
+    target_positions[tmp.data].x = x + 0.75 * cos(theta); // project forward by 0.5 meters in the direction that the finding rover was facing when the target was detected
+    target_positions[tmp.data].y = y + 0.75 * sin(theta);
+    target_positions[tmp.data].theta = theta;
+    targets_detected[tmp.data] = true;
+    targets_available_detected[tmp.data] = targets_detected[tmp.data] && targets_available[tmp.data];
+    if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
     {
-        stateMachineState = STATE_MACHINE_CHANGE_MODE;
+        state_machine_state = STATE_MACHINE_CHANGE_MODE;
     }
-//    int targets_detected_size = 0;
-//    int targets_available_size = 0;
-//    int targets_available_detected_size = 0;
-//    int targets_collected_size = 0;
-//    for(int i = 0; i < 256; i++)
-//    {
-//        if(targetsDetected[i])
-//        {
-//            targets_detected_size++;
-//        }
-//        if(targetsAvailable[i])
-//        {
-//            targets_available_size++;
-//        }
-//        if(targetsAvailDetected[i])
-//        {
-//            targets_available_detected_size++;
-//        }
-//        if(targetsCollected[i])
-//        {
-//            targets_collected_size++;
-//        }
-//    }
-
-//    std::stringstream temp_data;
-//    temp_data <<
-//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size   ;
-//    std_msgs::String message;
-//    message.data = "DETECTED " + temp_data.str();
-//    messagePublish.publish(message);
 }
 
 void claimMessage(vector<string> msg_parts) // claimed this, now remove from global queue
@@ -1140,41 +985,8 @@ void claimMessage(vector<string> msg_parts) // claimed this, now remove from glo
     converter.str("");
     converter.clear();
 
-    targetsAvailable[tmp.data] = false;
-    targetsAvailDetected[tmp.data] = targetsDetected[tmp.data] && targetsAvailable[tmp.data];
-//    targetClaimed.data = tmp.data; // sets the id of the claimed target to be used by target handler.
-
-//    int targets_detected_size = 0;
-//    int targets_available_size = 0;
-//    int targets_available_detected_size = 0;
-//    int targets_collected_size = 0;
-
-//    for(int i = 0; i < 256; i++)
-//    {
-//        if(targetsDetected[i])
-//        {
-//            targets_detected_size++;
-//        }
-//        if(targetsAvailable[i])
-//        {
-//            targets_available_size++;
-//        }
-//        if(targetsAvailDetected[i])
-//        {
-//            targets_available_detected_size++;
-//        }
-//        if(targetsCollected[i])
-//        {
-//            targets_collected_size++;
-//        }
-//    }
-
-//    std::stringstream temp_data;
-//    temp_data <<
-//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
-//    std_msgs::String message;
-//    message.data = "CLAIM " + temp_data.str();
-//    messagePublish.publish(message);
+    targets_available[tmp.data] = false;
+    targets_available_detected[tmp.data] = targets_detected[tmp.data] && targets_available[tmp.data];
 }
 
 void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
@@ -1189,41 +1001,8 @@ void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to
     converter.str("");
     converter.clear();
 
-    targetsAvailable[tmp.data] = true;
-    targetsAvailDetected[tmp.data] = targetsDetected[tmp.data] && targetsAvailable[tmp.data];
-//    targetClaimed.data = tmp.data; // sets the id of the claimed target to be used by target handler.
-
-//    int targets_detected_size = 0;
-//    int targets_available_size = 0;
-//    int targets_available_detected_size = 0;
-//    int targets_collected_size = 0;
-
-//    for(int i = 0; i < 256; i++)
-//    {
-//        if(targetsDetected[i])
-//        {
-//            targets_detected_size++;
-//        }
-//        if(targetsAvailable[i])
-//        {
-//            targets_available_size++;
-//        }
-//        if(targetsAvailDetected[i])
-//        {
-//            targets_available_detected_size++;
-//        }
-//        if(targetsCollected[i])
-//        {
-//            targets_collected_size++;
-//        }
-//    }
-
-//    std::stringstream temp_data;
-//    temp_data <<
-//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsCollected " << targets_collected_size;
-//    std_msgs::String message;
-//    message.data = "UNCLAIM " + temp_data.str();
-//    messagePublish.publish(message);
+    targets_available[tmp.data] = true;
+    targets_available_detected[tmp.data] = targets_detected[tmp.data] && targets_available[tmp.data];
 }
 
 void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
@@ -1238,159 +1017,14 @@ void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to gl
     converter.str("");
     converter.clear();
 
-    targetsHome[tmp.data] = true;
-//    targetClaimed.data = tmp.data; // sets the id of the claimed target to be used by target handler.
-
-//    int targets_detected_size = 0;
-//    int targets_available_size = 0;
-//    int targets_available_detected_size = 0;
-//    int targets_home_size = 0;
-
-//    for(int i = 0; i < 256; i++)
-//    {
-//        if(targetsDetected[i])
-//        {
-//            targets_detected_size++;
-//        }
-//        if(targetsAvailable[i])
-//        {
-//            targets_available_size++;
-//        }
-//        if(targetsAvailDetected[i])
-//        {
-//            targets_available_detected_size++;
-//        }
-//        if(targetsHome[i])
-//        {
-//            targets_home_size++;
-//        }
-//    }
-
-//    std::stringstream temp_data;
-//    temp_data <<
-//                 roverName << " targetsAvailDetected " << targets_available_detected_size << " targetsDetected " << targets_detected_size << " targetsAvailable " << targets_available_size << " targetsHome " << targets_home_size;
-//    std_msgs::String message;
-//    message.data = "HOME " + temp_data.str();
-//    messagePublish.publish(message);
-}
-/***********************
- * DEBUGGING
- ************************/
-void debugWaypoints()
-{
-    std::stringstream converter;
-    converter <<
-                 roverName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y;
-    std_msgs::String message;
-    message.data = "WAYPOINTS " + converter.str();
-    messagePublish.publish(message);
-}
-
-void debugRotate()
-{
-    std::stringstream converter;
-    converter <<
-                 roverName << " ct" << currentLocation.theta << " gt" << goalLocation.theta;
-    std_msgs::String message;
-    message.data = "ROTATING " + converter.str();
-    messagePublish.publish(message);
-}
-
-void debugTranslate(double distance_)
-{
-    std::stringstream converter;
-    converter <<
-                 roverName << " cx" << currentLocation.x << " cy" << currentLocation.y << " "  << " gx" << goalLocation.x << " gy" << goalLocation.y << " " << distance_;
-    std_msgs::String message;
-    message.data = "TRANSLATING " + converter.str();
-    messagePublish.publish(message);
-}
-
-void debugRandom()
-{
-    int targets_detected_size = 0;
-    int count = 0;
-    for(int i = 0; i < 256; i++)
-    {
-        if(targetsDetected[i])
-        {
-            count++;
-        }
-        if(targetsAvailDetected[i])
-        {
-            targets_detected_size++;
-        }
-    }
-
-
-    std::stringstream converter;
-    converter <<
-                 roverName << " targetsAvailDetected_size " << targets_detected_size << "TOTAL: " << count;
-    std_msgs::String message;
-    message.data = "RANDOM " + converter.str();
-    messagePublish.publish(message);
-}
-
-void debugTargetScreenshot(int count)
-{
-    std::stringstream converter;
-    converter <<
-                 roverName << " " << count;
-    std_msgs::String message;
-    message.data = "COUNT " + converter.str();
-    messagePublish.publish(message);
+    targets_home[tmp.data] = true;
 }
 
 void visitRandomLocation()
 {
     double r = rng->uniformReal(0.5, 6);
     double t = rng->uniformReal(0, 2 * M_PI);
-    goalLocation.x = r * cos(t);
-    goalLocation.y = r * sin(t);
-    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-}
-
-void lookBack()
-{
-    geometry_msgs::Pose2D savedPosition;
-    savedPosition.x = goalLocation.x;
-    savedPosition.y = goalLocation.y;
-    savedPosition.theta = goalLocation.theta;
-    cluster_detect.push_back(savedPosition);
-
-    // new goal locations
-    goalLocation.x = .25*cos(currentLocation.theta + M_PI) + currentLocation.x;
-    goalLocation.y = .25*sin(currentLocation.theta + M_PI) + currentLocation.y;
-    goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-    
-    std::stringstream converter;
-    converter <<
-                 roverName << " cx " << currentLocation.x << " cy " << currentLocation.y << " ct " << currentLocation.theta <<
-                 " gx " << goalLocation.x << " gy " << goalLocation.y << " gt " << goalLocation.theta;
-    std_msgs::String message;
-    message.data = "CLUSTER " + converter.str();
-    messagePublish.publish(message);
-
-    cluster = true;
-}
-
-void circle()
-{
-    double temp_x = goalLocation.x;
-    double temp_y = goalLocation.y;
-    double temp_theta = goalLocation.theta;
-    for(int i = 0; i < 3; i++)
-    {
-        goalLocation.x = 0.001*cos(currentLocation.theta + M_PI);
-        goalLocation.y = 0.001*sin(currentLocation.theta + M_PI);
-        goalLocation.theta = computeGoalTheta(goalLocation, currentLocation);
-        // goalLocation.theta = angles::shortest_angular_distance(currentLocation.theta, M_PI); // flip directions
-        // goalLocation.theta = currentLocation.theta - M_PI; // flip directions
-//        pivot(); // rotate backwards
-        goalLocation.x = temp_x;
-        goalLocation.y = temp_y;
-        goalLocation.theta = temp_theta;
-//        pivot(); // rotate to original heading
-    }
-    targets_detected_screenshot = 0;
+    goal_location.x = r * cos(t);
+    goal_location.y = r * sin(t);
+    goal_location.theta = computeGoalTheta(goal_location, current_location);
 }

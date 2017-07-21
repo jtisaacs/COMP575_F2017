@@ -2,14 +2,14 @@
 #define TRANSLATIONALERROR_H
 
 #include "PIDError.h"
-#include <math.h>
+#include <cmath>
 
 class TranslationalError : public PIDError
 {
 
 public:
-
-    float calculateCurrentError(geometry_msgs::Pose2D currentLocation, geometry_msgs::Pose2D goalLocation);
+    TranslationalError();
+    float calculateCurrentError(pose currentLocation, pose goalLocation);
 
 private:
 
