@@ -169,6 +169,7 @@ void unclaimResource(int resouceID);
 void homeResource(int resouceID);
 bool isGoalReachedR(pose current_location, pose goal_location);
 bool isGoalReachedT(pose current_location, pose goal_location);
+std_msgs::Int16 parseMessage(vector<string> msg_parts);
 
 bool cluster = false;
 void circle();
@@ -305,7 +306,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             setVelocity(linear_velocity, angular_velocity);
 
             std::stringstream converter;
-            converter << arrayLength(waypoints_x) << ", " << arrayLength(waypoints_x2) << ", " << sizeof(waypoints_x)/sizeof(waypoints_x[0]);
+            converter << sizeof(waypoints_x)/sizeof(waypoints_x[0]);
             std_msgs::String message;
             message.data = "ANGULAR INFO: start " + converter.str();
             angular_publisher.publish(message);
@@ -502,87 +503,37 @@ void setVelocity(double linearVel, double angularVel)
 /***********************
  * ROS CALLBACK HANDLERS
  ************************/
-void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
-{
-
-    for(int i = 0; i < message->tags.data.size(); i++)
-    {
-        //check if target has not yet been collected
-        if ( message->tags.data[i] == HOME_APRIL_TAG_ID || !targets_home[message->tags.data[i]] )
-        {
-            // We have encountered a target that is either the home location (256) or is a target that we haven't dropped off yet.
-            if ( rover_current_mode==MODE_COLLECTOR && (message->tags.data[i] == HOME_APRIL_TAG_ID) && roverCapacity==CAPACITY_CARRYING )
-            {
-                // We are a collector, we are carrying a target, and we reached home base
-                // This is actually the STATE_MACHINE_SCORE_TARGET state, but it now lives inside the target handler.
-
-                setVelocity(0.0,0.0); // stop the rover
-                homeResource(id_claimed_target.data); // deliver the id of the target that you were carrying.
-                //publish to scoring code
-                targetDropOffPublish.publish(message->image); // publish the image that you are dropping off so it can be scored.
-
-                //targetsCollected[targetClaimed.data] = 1;
-
-                roverCapacity=CAPACITY_EMPTY; // set the capacity of this rover back to empty
-
-                id_claimed_target.data = -1; // we no longer have a claimed target so we need to claim a new target.
-
-                state_machine_state = STATE_MACHINE_CLAIM_TARGET;
-            }
-            else if (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]==id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
-            {
-                // We have found the claimed target, so we need to pick it up and return to home.
-                setVelocity(0.0,0.0); // stop the rover
-                roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-
-                // copy target ID to class variable
-                id_claimed_target_once_detected.data = message->tags.data[i];
-                // publish to scoring code
-                targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                // publish detected target
-                targetCollectedPublish.publish(id_claimed_target_once_detected);
-                state_machine_state = STATE_MACHINE_RETURN_HOME;
-            }
-            else if  (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]!=id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
-            {
-                // we have found a target that isn't the one we claimed.  We need to unclaim the one we have and claim a new one.
-                if (targets_available_detected[message->tags.data[i]])
-                {
-                    // here we need to unclaim our original and claim this one.
-                    setVelocity(0.0,0.0); // stop the rover
-                    roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-
-                    unclaimResource(id_claimed_target.data);
-
-                    claimResource(message->tags.data[i]); // update targets detected and available array
-                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
-
-
-                    id_claimed_target_once_detected.data = message->tags.data[i];
-                    // publish to scoring code
-                    targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                    // publish detected target
-                    targetCollectedPublish.publish(id_claimed_target_once_detected);
-                    // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    state_machine_state = STATE_MACHINE_RETURN_HOME;
+void targetHandler(const shared_messages::TagsImage::ConstPtr &message) {
+    for (int message_index = 0; message_index < message->tags.data.size(); message_index++) {
+        int tag_id = message->tags.data[message_index];
+        if (tag_id == HOME_APRIL_TAG_ID && roverCapacity==CAPACITY_CARRYING) {
+            setVelocity(0.0,0.0); // stop the rover
+            homeResource(id_claimed_target.data);
+            targetDropOffPublish.publish(message->image);
+            roverCapacity = CAPACITY_EMPTY;
+            id_claimed_target.data = -1;
+            state_machine_state = STATE_MACHINE_CLAIM_TARGET;
+        }
+        else if (tag_id != HOME_APRIL_TAG_ID && !targets_home[tag_id]) {
+            if (rover_current_mode == MODE_COLLECTOR) {
+                switch(roverCapacity){
+                case CAPACITY_CLAIMED:
+                    if (tag_id != id_claimed_target.data) {
+                        unclaimResource(id_claimed_target.data);
+                        claimResource(tag_id); // update targets detected and available array
+                        id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
+                    }
+                    break;
+                case CAPACITY_EMPTY:
+                    claimResource(tag_id); // update targets detected and available array
+                    id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
+                    break;
                 }
-                else if ( !targets_detected[message->tags.data[i]] )
+                if (roverCapacity!=CAPACITY_CARRYING)
                 {
-                    // here we need to unclaim our original, then reportDectected and claim this one.
                     setVelocity(0.0,0.0); // stop the rover
                     roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-
-                    unclaimResource(id_claimed_target.data);
-
-                    std_msgs::Int16 tag;
-                    tag.data = message->tags.data[i];
-                    reportDetected(tag);
-
-                    claimResource(message->tags.data[i]); // update targets detected and available array
-                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
-
-
-                    id_claimed_target_once_detected.data = message->tags.data[i];
+                    id_claimed_target_once_detected.data = tag_id;
                     // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     // publish detected target
@@ -591,58 +542,13 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
                     state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
             }
-            else if (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && roverCapacity==CAPACITY_EMPTY) // we have found a target
-            {
-                if (targets_available_detected[message->tags.data[i]])
-                {
-                    // here we need to claim this one.
-                    setVelocity(0.0,0.0); // stop the rover
-                    roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-
-
-                    claimResource(message->tags.data[i]); // update targets detected and available array
-                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
-
-
-                    id_claimed_target_once_detected.data = message->tags.data[i];
-                    // publish to scoring code
-                    targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                    // publish detected target
-                    targetCollectedPublish.publish(id_claimed_target_once_detected);
-                    // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    state_machine_state = STATE_MACHINE_RETURN_HOME;
-                }
-                else if ( !targets_detected[message->tags.data[i]] )
-                {
-                    // here we need to reportDectected and claim this one.
-                    setVelocity(0.0,0.0); // stop the rover
-                    roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-
-                    std_msgs::Int16 tag;
-                    tag.data = message->tags.data[i];
-                    reportDetected(tag);
-
-
-                    claimResource(message->tags.data[i]); // update targets detected and available array
-                    id_claimed_target.data = message->tags.data[i]; // This should be where targetClaimed gets set.
-
-
-                    id_claimed_target_once_detected.data = message->tags.data[i];
-                    // publish to scoring code
-                    targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                    // publish detected target
-                    targetCollectedPublish.publish(id_claimed_target_once_detected);
-                    // targetCollectedPublish.publish(targetDetected); // from UNM Code
-                    state_machine_state = STATE_MACHINE_RETURN_HOME;
-                }
-            }
-            else if ( !targets_detected[message->tags.data[i]] ) //we have encountered a tag that has not been detected yet and we are in Search Mode.  Report it.
-            {
+            if (!targets_detected[tag_id]) {
                 std_msgs::Int16 tag;
-                tag.data = message->tags.data[i];
+                tag.data = tag_id;
                 reportDetected(tag);
             }
         }
+
     }
 }
 
@@ -964,38 +870,29 @@ void detectedMessage(vector<string> msg_parts)
 
 void claimMessage(vector<string> msg_parts) // claimed this, now remove from global queue
 {
-    std_msgs::Int16 tmp;
-    tmp.data = -1;
+    std_msgs::Int16 tag_id = parseMessage(msg_parts);
 
-    stringstream converter;
 
-    converter << msg_parts[0];
-    converter >> tmp.data;
-    converter.str("");
-    converter.clear();
-
-    targets_available[tmp.data] = false;
-    targets_available_detected[tmp.data] = targets_detected[tmp.data] && targets_available[tmp.data];
+    targets_available[tag_id.data] = false;
+    targets_available_detected[tag_id.data] = targets_detected[tag_id.data] && targets_available[tag_id.data];
 }
 
 void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
 {
-    std_msgs::Int16 tmp;
-    tmp.data = -1;
+    std_msgs::Int16 tag_id = parseMessage(msg_parts);
 
-    stringstream converter;
-
-    converter << msg_parts[0];
-    converter >> tmp.data;
-    converter.str("");
-    converter.clear();
-
-    targets_available[tmp.data] = true;
-    targets_available_detected[tmp.data] = targets_detected[tmp.data] && targets_available[tmp.data];
+    targets_available[tag_id.data] = true;
+    targets_available_detected[tag_id.data] = targets_detected[tag_id.data] && targets_available[tag_id.data];
 }
 
 void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
 {
+    std_msgs::Int16 tag_id = parseMessage(msg_parts);
+
+    targets_home[tag_id.data] = true;
+}
+
+std_msgs::Int16 parseMessage(vector<string> msg_parts) {
     std_msgs::Int16 tmp;
     tmp.data = -1;
 
@@ -1005,8 +902,7 @@ void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to gl
     converter >> tmp.data;
     converter.str("");
     converter.clear();
-
-    targets_home[tmp.data] = true;
+    return tmp;
 }
 
 void visitRandomLocation()

@@ -1,0 +1,4 @@
+#ifndef TARGETSTATE_H
+#define TARGETSTATE_H
+
+#endif // TARGETSTATE_H
