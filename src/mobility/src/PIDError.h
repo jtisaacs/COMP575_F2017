@@ -12,7 +12,7 @@ public:
     float getIntegrator();
     float calculateDerivative(float current_error);
     void setPriorError(float prior_error);
-    virtual float calculateCurrentError(pose currentLocation, pose goalLocation){return 1000.1000;}
+    virtual float calculateCurrentError(pose currentLocation, pose goalLocation)=0;
 
 protected:
 

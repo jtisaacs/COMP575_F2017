@@ -11,15 +11,13 @@ public:
     PIDController( PIDError &p ) : pid_error(p) {}
     float calculateVelocity(pose current_location, pose goal_location);
     float getCurrentError();
-    virtual bool checkForNewGoal(pose goal_location){}
+    virtual bool isGoalChanged(pose goal_location)=0;
+    virtual bool isGoalReached(pose current_location, pose goal_location)=0;
 
 private:
-
     void updateErrorIntegrator(pose goal_location, float current_error);
 
-
 protected:
-
     static const float FLOAT_COMPARISON_THRESHOLD = 1E-6;
     static const float MAX_VELOCITY = 0.2;
     struct gains_struct{
@@ -30,8 +28,6 @@ protected:
     struct gains_struct gains;
     pose goal_location_prior;
     PIDError &pid_error;
-    float current_error;
-
 };
 
 #endif // PIDCONTROLLER_H

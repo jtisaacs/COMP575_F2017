@@ -3,7 +3,7 @@
 #include <iostream>
 #include <ros/ros.h>
 #include <angles/angles.h>
-RotationalError::RotationalError()
+RotationalError::RotationalError(): PIDError()
 {
 
 }

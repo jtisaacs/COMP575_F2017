@@ -5,7 +5,7 @@
 float PIDController::calculateVelocity(pose current_location, pose goal_location)
 {
     std::cout << "\nCalculating Velocity\n";
-    current_error = pid_error.calculateCurrentError(current_location, goal_location);
+    float current_error = pid_error.calculateCurrentError(current_location, goal_location);
     std::cout << "current_error: " << current_error << "\n";
     std::cout << "currentLocation: " << current_location.x << ", " << current_location.y << ", "  << current_location.theta << "\n";
     std::cout << "goalLocation: " << ", " << goal_location.x << ", " << goal_location.y << ", " << goal_location.theta << "\n";
@@ -20,7 +20,7 @@ float PIDController::calculateVelocity(pose current_location, pose goal_location
 
 void PIDController::updateErrorIntegrator(pose goal_location, float current_error)
 {
-    if (checkForNewGoal(goal_location))
+    if (this->isGoalChanged(goal_location))
     {
         pid_error.resetIntegrator();
     }
@@ -28,9 +28,4 @@ void PIDController::updateErrorIntegrator(pose goal_location, float current_erro
     {
         pid_error.updateIntegrator(current_error);
     }
-}
-
-float PIDController::getCurrentError()
-{
-    return current_error;
 }

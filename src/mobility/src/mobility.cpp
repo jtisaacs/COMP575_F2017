@@ -27,6 +27,8 @@
 #include <signal.h>
 #include <math.h> 
 
+//#define ARRAY_SIZE(array) (sizeof((array))/sizeof((array[0])))
+
 using namespace std;
 
 // Random number generator
@@ -55,17 +57,14 @@ vector <pose> cluster_detect;
 std_msgs::Int16 id_claimed_target;
 std_msgs::Int16 id_claimed_target_once_detected; //ID of the claimed target once it has been detected by gatherer.
 
-bool targets_collected[256];     // array of booleans indicating whether each target ID has been found and delivered;  not used at this time.
-bool targets_detected[256];      // array of booleans indicating whether each target ID has been found
-bool targets_available[256];     // array of booleans indicating whether each target ID has not been claimed by a collector.
-bool targets_available_detected[256]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
-bool targets_home[256]; // array of booleans indicating wheter each target ID has been delivered to home base.
-pose target_positions[256];
-
-
-// ajax and aeneas waypoints, lawnmower search
-const int LAWNMOWER_SIZE_1 = 22; //29JTI must change this to match size of waypoints_x.  Why??
-const int LAWNMOWER_SIZE_2 = 35;
+const int HOME_APRIL_TAG_ID = 256;
+const int TOTAL_NUMBER_RESOURCES = 256;
+bool targets_collected[TOTAL_NUMBER_RESOURCES];     // array of booleans indicating whether each target ID has been found and delivered
+bool targets_detected[TOTAL_NUMBER_RESOURCES];      // array of booleans indicating whether each target ID has been found
+bool targets_available[TOTAL_NUMBER_RESOURCES];     // array of booleans indicating whether each target ID has not been claimed by a collector.
+bool targets_available_detected[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
+bool targets_home[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating wheter each target ID has been delivered to home base.
+pose target_positions[TOTAL_NUMBER_RESOURCES];
 
 const float d = 0.5;
 float waypoints_x [] = {7.5-d, -(7.5-d), -(7.5-d),    7.5-d,   7.5-d, -(7.5-2*d), -(7.5-2*d),    7.5-2*d, 7.5-2*d, -(7.5-3*d), -(7.5-3*d),    7.5-3*d, 7.5-3*d, -(7.5-4*d), -(7.5-4*d),   7.5-4*d, 7.5-4*d, 7.5-4*d, -(7.5-5*d), -(7.5-5*d),    7.5-5*d,    7.5-5*d};
@@ -168,6 +167,8 @@ void visitRandomLocation();
 void claimResource(int resouceID);
 void unclaimResource(int resouceID);
 void homeResource(int resouceID);
+bool isGoalReachedR(pose current_location, pose goal_location);
+bool isGoalReachedT(pose current_location, pose goal_location);
 
 bool cluster = false;
 void circle();
@@ -228,7 +229,7 @@ int main(int argc, char **argv)
     killSwitchTimer = mNH.createTimer(ros::Duration(kill_switch_timeout), killSwitchTimerEventHandler);
     stateMachineTimer = mNH.createTimer(ros::Duration(mobility_loop_time_step), mobilityStateMachine);
 
-    for(int i = 0; i < 256; i++)
+    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
     {
         targets_available[i] = true;  // initially all targets are available to be claimed although none have been detected yet.
     }
@@ -261,7 +262,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 {
                     setGoalLocation(waypoints_x[0],waypoints_y[0]);
                     pose nextPosition;
-                    for (int i = LAWNMOWER_SIZE_1; i > 0; i--)
+                    for (int i = sizeof(waypoints_x)/sizeof(waypoints_x[0]); i > 0; i--)
                     {
                         nextPosition.x = waypoints_x[i];
                         nextPosition.y = waypoints_y[i];
@@ -272,7 +273,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 {
                     setGoalLocation(waypoints_x2[0],waypoints_y2[0]);
                     pose nextPosition;
-                    for (int i = LAWNMOWER_SIZE_2; i > 0; i--)
+                    for (int i = sizeof(waypoints_x2)/sizeof(waypoints_x2[0]); i > 0; i--)
                     {
                         nextPosition.x = waypoints_x2[i];
                         nextPosition.y = waypoints_y2[i];
@@ -291,42 +292,33 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_ROTATE:
         {
             float angular_velocity = 0.0;
-            float random_velocity = rng->uniformReal(-.02, 0.02);
-            if (abs(angles::shortest_angular_distance(current_location.theta, goal_location.theta)) > 0.25)
+            double linear_velocity = 0.0;
+            if (isGoalReachedR(current_location, goal_location))
             {
-                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
-                setVelocity(random_velocity, angular_velocity);//add a little bit of random linear-velocity to make turns less sticky
+                state_machine_state = STATE_MACHINE_TRANSLATE; // move to translate step
             }
             else
             {
-                angular_velocity = 0.0;
-                setVelocity(0.0, angular_velocity); // stop
-                state_machine_state = STATE_MACHINE_TRANSLATE; // move to translate step
+                linear_velocity = rng->uniformReal(-.02, 0.02);
+                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
             }
+            setVelocity(linear_velocity, angular_velocity);
+
             std::stringstream converter;
-            converter << rotational_controller.getCurrentError() << ", " << angular_velocity << ", " << angles::shortest_angular_distance(current_location.theta, goal_location.theta);
+            converter << arrayLength(waypoints_x) << ", " << arrayLength(waypoints_x2) << ", " << sizeof(waypoints_x)/sizeof(waypoints_x[0]);
             std_msgs::String message;
-            message.data = "AANGULAR INFO: " + converter.str();
+            message.data = "ANGULAR INFO: start " + converter.str();
             angular_publisher.publish(message);
+
             state_machine_msg.data = "ROTATING";
             break;
         }
         case STATE_MACHINE_TRANSLATE:
         {
-
             double angular_velocity = 0.0;
             double linear_velocity = 0.0;
-            if (computeDistanceBetweenWaypoints(goal_location, current_location) >= 0.25) // if you are not within 25cm of goal
+            if (isGoalReachedT(current_location, goal_location))
             {
-                linear_velocity = translational_controller.calculateVelocity(current_location, goal_location);
-                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
-                setVelocity(linear_velocity, angular_velocity);
-            }
-            else
-            {
-                angular_velocity = 0.0;
-                linear_velocity = 0.0;
-                setVelocity(linear_velocity, angular_velocity);
                 // This is where the magic happens.  We must decide what to do once we have reached the desired location.
                 if ( avoiding_obstacle )
                 {
@@ -371,6 +363,12 @@ void mobilityStateMachine(const ros::TimerEvent &)
                     state_machine_state = STATE_MACHINE_EXPLORE_NEAR_ORIGIN; // We have gone to where we thought the origin should be but didn't find it there.
                 }
             }
+            else
+            {
+                linear_velocity = translational_controller.calculateVelocity(current_location, goal_location);
+                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
+            }
+            setVelocity(linear_velocity, angular_velocity);
             state_machine_msg.data = "TRANSLATING";//, " + converter.str();
             break;
         }
@@ -510,10 +508,10 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
     for(int i = 0; i < message->tags.data.size(); i++)
     {
         //check if target has not yet been collected
-        if ( message->tags.data[i] == 256 || !targets_home[message->tags.data[i]] )
+        if ( message->tags.data[i] == HOME_APRIL_TAG_ID || !targets_home[message->tags.data[i]] )
         {
             // We have encountered a target that is either the home location (256) or is a target that we haven't dropped off yet.
-            if ( rover_current_mode==MODE_COLLECTOR && (message->tags.data[i] == 256) && roverCapacity==CAPACITY_CARRYING )
+            if ( rover_current_mode==MODE_COLLECTOR && (message->tags.data[i] == HOME_APRIL_TAG_ID) && roverCapacity==CAPACITY_CARRYING )
             {
                 // We are a collector, we are carrying a target, and we reached home base
                 // This is actually the STATE_MACHINE_SCORE_TARGET state, but it now lives inside the target handler.
@@ -531,7 +529,7 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
 
                 state_machine_state = STATE_MACHINE_CLAIM_TARGET;
             }
-            else if (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]==id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
+            else if (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]==id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
             {
                 // We have found the claimed target, so we need to pick it up and return to home.
                 setVelocity(0.0,0.0); // stop the rover
@@ -545,7 +543,7 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
                 targetCollectedPublish.publish(id_claimed_target_once_detected);
                 state_machine_state = STATE_MACHINE_RETURN_HOME;
             }
-            else if  (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]!=id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
+            else if  (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && (message->tags.data[i]!=id_claimed_target.data) && roverCapacity==CAPACITY_CLAIMED)
             {
                 // we have found a target that isn't the one we claimed.  We need to unclaim the one we have and claim a new one.
                 if (targets_available_detected[message->tags.data[i]])
@@ -593,7 +591,7 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message)
                     state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
             }
-            else if (!(message->tags.data[i] == 256) && rover_current_mode==MODE_COLLECTOR && roverCapacity==CAPACITY_EMPTY) // we have found a target
+            else if (!(message->tags.data[i] == HOME_APRIL_TAG_ID) && rover_current_mode==MODE_COLLECTOR && roverCapacity==CAPACITY_EMPTY) // we have found a target
             {
                 if (targets_available_detected[message->tags.data[i]])
                 {
@@ -658,34 +656,25 @@ void obstacleHandler(const std_msgs::UInt8::ConstPtr &message)
 {
     if ( (message->data > 0) && rover_current_mode==MODE_COLLECTOR ) //!(avoiding_obstacle)
     {
-//        setVelocity(0.0,0.0); // stop the rover
+        setVelocity(-0.2,0.0); // First back up a little to give space before taking action.
+        pose savedPosition;
+
+        savedPosition.x = goal_location.x;
+        savedPosition.y = goal_location.y;
+        savedPosition.theta = goal_location.theta;
+        saved_positions.push_back(savedPosition);
         if ( (roverCapacity==CAPACITY_CARRYING) && (angles::shortest_angular_distance(current_location.theta, atan2(-current_location.y, -current_location.x)) < M_PI_2) )
         {
-            setVelocity(-0.2,0.0);
-            // we are going to the goal with a target.  Just wait till the other guy moves out of our way.
-            pose savedPosition;
-
-            savedPosition.x = goal_location.x;
-            savedPosition.y = goal_location.y;
-            savedPosition.theta = goal_location.theta;
-            saved_positions.push_back(savedPosition);
-
-            //try not to move.
+            // We are going to the goal with a target.  Just wait till the other guy moves out of our way.
+            // Try not to move.
             goal_location.x = current_location.x;
             goal_location.y = current_location.y;
             goal_location.theta = current_location.theta;
         }
         else
         {
-            setVelocity(-0.2,0.0);
-            // we are not delivering a target so lets get out of the way.
-            pose savedPosition;
-            savedPosition.x = goal_location.x;
-            savedPosition.y = goal_location.y;
-            savedPosition.theta = goal_location.theta;
-            saved_positions.push_back(savedPosition);
-
-            //obstacle on right side
+            // We are not delivering a target so lets get out of the way.
+            // obstacle on right side
             if (message->data == 1)
             {
                 //select new heading 0.2 radians to the left
@@ -800,7 +789,7 @@ void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     int targets_detected_size = 0;
-    for(int i = 0; i < 256; i++)
+    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
     {
         if(targets_detected[i])
         {
@@ -848,7 +837,7 @@ void homeResource(int resouceID) // simply publish (broadcast)
     double current_time = ros::Time::now().toSec();
     int targets_home_size = 0;
 
-    for(int i = 0; i < 256; i++)
+    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
     {
         if(targets_home[i])
         {
@@ -868,7 +857,7 @@ int searchQueue()
 {
     double minDistance = LONG_MAX;
     int idClosestTarget = -1;
-    for(int resource = 0; resource < 256; resource++)
+    for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++)
     {
         if(targets_available_detected[resource])
         {
@@ -1027,4 +1016,16 @@ void visitRandomLocation()
     goal_location.x = r * cos(t);
     goal_location.y = r * sin(t);
     goal_location.theta = computeGoalTheta(goal_location, current_location);
+}
+
+bool isGoalReachedR(pose current_location, pose goal_location)
+{
+    float distance_to_goal = fabs(angles::shortest_angular_distance(current_location.theta, goal_location.theta));
+    return distance_to_goal < 0.25; // 0.25 radians around goal heading
+}
+
+bool isGoalReachedT(pose current_location, pose goal_location)
+{
+    float distance_to_goal = hypotf(goal_location.x-current_location.x, goal_location.y-current_location.y);
+    return distance_to_goal < 0.5; // 0.5 meter circle around target waypoint.
 }
