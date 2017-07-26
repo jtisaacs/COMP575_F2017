@@ -17,6 +17,7 @@
 
 #include "RotationalController.h"
 #include "TranslationalController.h"
+#include "SearchController.h"
 #include "Pose.h"
 
 // Custom messages
@@ -27,8 +28,6 @@
 #include <signal.h>
 #include <math.h> 
 
-//#define ARRAY_SIZE(array) (sizeof((array))/sizeof((array[0])))
-
 using namespace std;
 
 // Random number generator
@@ -36,6 +35,8 @@ random_numbers::RandomNumberGenerator *rng;
 
 TranslationalController translational_controller;
 RotationalController rotational_controller;
+RotationalController rotational_translational_controller;
+SearchController search_controller;
 
 string rover_name;
 char host[128];
@@ -66,12 +67,6 @@ bool targets_available_detected[TOTAL_NUMBER_RESOURCES]; // array of booleans in
 bool targets_home[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating wheter each target ID has been delivered to home base.
 pose target_positions[TOTAL_NUMBER_RESOURCES];
 
-const float d = 0.5;
-float waypoints_x [] = {7.5-d, -(7.5-d), -(7.5-d),    7.5-d,   7.5-d, -(7.5-2*d), -(7.5-2*d),    7.5-2*d, 7.5-2*d, -(7.5-3*d), -(7.5-3*d),    7.5-3*d, 7.5-3*d, -(7.5-4*d), -(7.5-4*d),   7.5-4*d, 7.5-4*d, 7.5-4*d, -(7.5-5*d), -(7.5-5*d),    7.5-5*d,    7.5-5*d};
-float waypoints_y [] = {7.5-d,    7.5-d, -(7.5-d), -(7.5-d), 7.5-2*d,    7.5-2*d, -(7.5-2*d), -(7.5-2*d), 7.5-3*d,    7.5-3*d, -(7.5-3*d), -(7.5-3*d), 7.5-4*d,    7.5-4*d, -(7.5-4*d), -(7.5-4*d), 7.5-5*d, 7.5-5*d,    7.5-5*d, -(7.5-5*d), -(7.5-5*d),    7.5-6*d};
-
-float waypoints_x2 [] = {7.5-5*d, -(7.5-6*d), -(7.5-6*d),    7.5-6*d, 7.5-6*d, 7.5-6*d, -(7.5-7*d), -(7.5-7*d),    7.5-7*d, 7.5-7*d, 7.5-7*d, -(7.5-8*d), -(7.5-8*d),    7.5-8*d, 7.5-8*d, 7.5-8*d, -(7.5-9*d), -(7.5-9*d),   7.5-9*d,   7.5-9*d, 7.5-9*d, -(7.5-10*d), -(7.5-10*d),   7.5-10*d,   7.5-10*d, 7.5-10*d, -(7.5-11*d), -(7.5-11*d),    7.5-11*d, 7.5-11*d, 7.5-11*d, -(7.5-12*d), -(7.5-12*d),    7.5-12*d, 7.5-12*d};
-float waypoints_y2 [] = {7.5-6*d,    7.5-6*d, -(7.5-6*d), -(7.5-6*d), 7.5-7*d, 7.5-7*d,    7.5-7*d, -(7.5-7*d), -(7.5-7*d), 7.5-8*d, 7.5-8*d,    7.5-8*d, -(7.5-8*d), -(7.5-8*d), 7.5-9*d, 7.5-9*d,    7.5-9*d, -(7.5-9*d), -(7.5-9*d), 7.5-10*d, 7.5-10*d,    7.5-10*d, -(7.5-10*d), -(7.5-10*d), 7.5-11*d, 7.5-11*d,    7.5-11*d, -(7.5-11*d), -(7.5-11*d), 7.5-12*d, 7.5-12*d,    7.5-12*d, -(7.5-12*d), -(7.5-12*d), 7.5-13*d};
 
 vector <pose> achilles_waypoints;
 vector <pose> ajax_waypoints;
@@ -157,7 +152,7 @@ void messageHandler(const std_msgs::String::ConstPtr &message);
 //Utility functions
 double computeGoalTheta(pose goal_location, pose current_location);
 double computeDistanceBetweenWaypoints(pose final_location, pose start_location);
-void setGoalLocation(double goalLocationX, double goalLocationY);
+void setGoalLocation(pose new_goal_location);
 int searchQueue();
 void debugWaypoints();
 void debugRotate();
@@ -203,7 +198,7 @@ int main(int argc, char **argv)
         rover_name = hostName;
         cout << "No Name Selected. Default is: " << rover_name << endl;
     }
-
+    search_controller = SearchController(rover_name);
     // NoSignalHandler so we can catch SIGINT ourselves and shutdown the node
     ros::init(argc, argv, (rover_name + "_MOBILITY"), ros::init_options::NoSigintHandler);
     ros::NodeHandle mNH;
@@ -258,34 +253,13 @@ void mobilityStateMachine(const ros::TimerEvent &)
             if (rover_name == "ajax" || rover_name == "aeneas") // set mode to searcher
             {
                 rover_current_mode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
-
-                if (rover_name == "ajax") // assign waypoints to perform lawnmower
-                {
-                    setGoalLocation(waypoints_x[0],waypoints_y[0]);
-                    pose nextPosition;
-                    for (int i = sizeof(waypoints_x)/sizeof(waypoints_x[0]); i > 0; i--)
-                    {
-                        nextPosition.x = waypoints_x[i];
-                        nextPosition.y = waypoints_y[i];
-                        ajax_waypoints.push_back(nextPosition);
-                    }
-                }
-                else if (rover_name == "aeneas") // assign waypoints to perform lawnmower
-                {
-                    setGoalLocation(waypoints_x2[0],waypoints_y2[0]);
-                    pose nextPosition;
-                    for (int i = sizeof(waypoints_x2)/sizeof(waypoints_x2[0]); i > 0; i--)
-                    {
-                        nextPosition.x = waypoints_x2[i];
-                        nextPosition.y = waypoints_y2[i];
-                        aeneas_waypoints.push_back(nextPosition);
-                    }
-                }
+                pose new_goal_location = search_controller.getNextWaypoint();
+                setGoalLocation(new_goal_location);
             }
             else // all other robots, assign to collect
             {
                 rover_current_mode = MODE_COLLECTOR;
-                setGoalLocation(current_location.x,current_location.y);
+                setGoalLocation(current_location);
             }
             state_machine_state = STATE_MACHINE_ROTATE;
             break;
@@ -367,7 +341,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             else
             {
                 linear_velocity = translational_controller.calculateVelocity(current_location, goal_location);
-                angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
+                angular_velocity = rotational_translational_controller.calculateVelocity(current_location, goal_location);
             }
             setVelocity(linear_velocity, angular_velocity);
             state_machine_msg.data = "TRANSLATING";//, " + converter.str();
@@ -478,7 +452,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
     else
     { // mode is NOT auto
 
-        // publish current state for the operator to see
+        // publish current state for the operator to seerotational_controller
         std::stringstream converter;
         converter <<"CURRENT MODE: " << simulation_mode;
 
@@ -560,56 +534,45 @@ void modeHandler(const std_msgs::UInt8::ConstPtr &message)
 
 void obstacleHandler(const std_msgs::UInt8::ConstPtr &message)
 {
-    if ( (message->data > 0) && rover_current_mode==MODE_COLLECTOR ) //!(avoiding_obstacle)
+    if ( message->data > 0 )
     {
         setVelocity(-0.2,0.0); // First back up a little to give space before taking action.
-        pose savedPosition;
-
-        savedPosition.x = goal_location.x;
-        savedPosition.y = goal_location.y;
-        savedPosition.theta = goal_location.theta;
-        saved_positions.push_back(savedPosition);
-        if ( (roverCapacity==CAPACITY_CARRYING) && (angles::shortest_angular_distance(current_location.theta, atan2(-current_location.y, -current_location.x)) < M_PI_2) )
+        if(rover_current_mode==MODE_COLLECTOR ) //!(avoiding_obstacle)
         {
-            // We are going to the goal with a target.  Just wait till the other guy moves out of our way.
-            // Try not to move.
-            goal_location.x = current_location.x;
-            goal_location.y = current_location.y;
-            goal_location.theta = current_location.theta;
-        }
-        else
-        {
-            // We are not delivering a target so lets get out of the way.
-            // obstacle on right side
-            if (message->data == 1)
+            pose savedPosition;
+            savedPosition.x = goal_location.x;
+            savedPosition.y = goal_location.y;
+            savedPosition.theta = goal_location.theta;
+            saved_positions.push_back(savedPosition);
+            if ( (roverCapacity==CAPACITY_CARRYING) && (angles::shortest_angular_distance(current_location.theta, atan2(-current_location.y, -current_location.x)) < M_PI_2) )
             {
-                //select new heading 0.2 radians to the left
-                goal_location.theta = current_location.theta + 0.78; //0.78
-//                setVelocity(0.2,-0.3);
-            }
-
-            //obstacle in front or on left side
-            else if (message->data == 2)
-            {
-                //select new heading 0.2 radians to the right
-                goal_location.theta = current_location.theta - 0.78; //0.78
-//                setVelocity(0.2,0.3);
+                // We are going to the goal with a target.  Just wait till the other guy moves out of our way.
+                // Try not to move.
+                goal_location.x = current_location.x;
+                goal_location.y = current_location.y;
+                goal_location.theta = current_location.theta;
             }
             else
             {
-                //select new heading 0.2 radians to the left
-                goal_location.theta = current_location.theta + 0.78; //0.78
-//                setVelocity(0.2,-0.3);
+                // We are not delivering a target so lets get out of the way.
+                // obstacle on right side
+                if (message->data == 1)
+                {
+                    goal_location.theta = current_location.theta + 0.78;
+                }
+                //obstacle in front or on left side
+                else
+                {
+                    goal_location.theta = current_location.theta - 0.78;
+                }
+                //select new position 0.75 m from current location
+                goal_location.x = current_location.x + (0.75 * cos(goal_location.theta));
+                goal_location.y = current_location.y + (0.75 * sin(goal_location.theta));
             }
-
-            //select new position 0.50 m from current location
-            goal_location.x = current_location.x + (0.75 * cos(goal_location.theta));
-            goal_location.y = current_location.y + (0.75 * sin(goal_location.theta));
+            avoiding_obstacle = true;
+            //switch to reset rotate pid to trigger collision avoidance
+            state_machine_state = STATE_MACHINE_ROTATE;
         }
-        avoiding_obstacle = true;
-
-        //switch to reset rotate pid to trigger collision avoidance
-        state_machine_state = STATE_MACHINE_ROTATE;
     }
 }
 
@@ -684,10 +647,10 @@ double computeDistanceBetweenWaypoints(pose final_location, pose start_location)
     return fabs(sqrt(pow(final_location.x - start_location.x, 2.0) + pow((final_location.y - start_location.y), 2.0)));
 }
 
-void setGoalLocation(double goalLocationX, double goalLocationY)
+void setGoalLocation(pose new_goal_location)
 {
-    goal_location.x = goalLocationX;
-    goal_location.y = goalLocationY;
+    goal_location.x = new_goal_location.x;
+    goal_location.y = new_goal_location.y;
     goal_location.theta = computeGoalTheta(goal_location, current_location);
 }
 
@@ -888,7 +851,6 @@ void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to
 void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
 {
     std_msgs::Int16 tag_id = parseMessage(msg_parts);
-
     targets_home[tag_id.data] = true;
 }
 
