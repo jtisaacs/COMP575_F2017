@@ -28,7 +28,7 @@ class SearchController {
   private:
 
     random_numbers::RandomNumberGenerator* rng;
-    pose stack_waypoints;
+    std::stack<pose> stack_waypoints;
 };
 
 #endif // SEARCHCONTROLLER_H

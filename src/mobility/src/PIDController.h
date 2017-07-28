@@ -19,7 +19,7 @@ private:
 
 protected:
     static const float FLOAT_COMPARISON_THRESHOLD = 1E-6;
-    static const float MAX_VELOCITY = 0.2;
+    static const float MAX_VELOCITY = 0.3;
     struct gains_struct{
         float KP;
         float KI;

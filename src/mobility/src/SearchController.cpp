@@ -30,7 +30,7 @@ SearchController::SearchController(std::string rover_name)
 void SearchController::fillStack(float waypoints_x [], float waypoints_y [], int array_length)
 {
     pose next_position;
-    for (int i = array_length; i > 0; i--)
+    for (int i = 0; i < array_length; i++)
     {
         next_position.x = waypoints_x[i];
         next_position.y = waypoints_y[i];
@@ -75,9 +75,9 @@ bool SearchController::isSearchFinished()
 pose SearchController::generateRandomWaypoint(pose current_location)
 {
     pose next_waypoint;
-    double newTheta = rng->gaussian(currentLocation.theta, 0.25);
-    double newRadius = rng->uniformReal(0,2.0);
-    next_waypoint.x = currentLocation.x + newRadius * cos(newTheta);
-    next_waypoint.y = currentLocation.y + newRadius * sin(newTheta);
+    double new_theta = rng->gaussian(current_location.theta, 0.25);
+    double new_radius = rng->uniformReal(0,2.0);
+    next_waypoint.x = current_location.x + new_radius * cos(new_theta);
+    next_waypoint.y = current_location.y + new_radius * sin(new_theta);
     return next_waypoint;
 }

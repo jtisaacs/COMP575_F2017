@@ -29,6 +29,7 @@ add_executable(
 	src/Saturation.cpp
 	src/RotationalController.cpp
 	src/TranslationalController.cpp
+	src/SearchController.cpp
 )
 
 add_dependencies(mobility ${catkin_EXPORTED_TARGETS})

@@ -65,12 +65,9 @@ bool targets_detected[TOTAL_NUMBER_RESOURCES];      // array of booleans indicat
 bool targets_available[TOTAL_NUMBER_RESOURCES];     // array of booleans indicating whether each target ID has not been claimed by a collector.
 bool targets_available_detected[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
 bool targets_home[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating wheter each target ID has been delivered to home base.
+bool targets_currently_claimed[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID is currently claimed by a collector.
 pose target_positions[TOTAL_NUMBER_RESOURCES];
 
-
-vector <pose> achilles_waypoints;
-vector <pose> ajax_waypoints;
-vector <pose> aeneas_waypoints;
 
 // ajax and aeneas cluster detection
 int targets_detected_screenshot = 0;
@@ -153,7 +150,7 @@ void messageHandler(const std_msgs::String::ConstPtr &message);
 double computeGoalTheta(pose goal_location, pose current_location);
 double computeDistanceBetweenWaypoints(pose final_location, pose start_location);
 void setGoalLocation(pose new_goal_location);
-int searchQueue();
+int findIDClosestAvailableTarget();
 void debugWaypoints();
 void debugRotate();
 void debugTranslate(double distance_);
@@ -253,7 +250,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             if (rover_name == "ajax" || rover_name == "aeneas") // set mode to searcher
             {
                 rover_current_mode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
-                pose new_goal_location = search_controller.getNextWaypoint();
+                pose new_goal_location = search_controller.getNextWaypoint(current_location);
                 setGoalLocation(new_goal_location);
             }
             else // all other robots, assign to collect
@@ -280,7 +277,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
             setVelocity(linear_velocity, angular_velocity);
 
             std::stringstream converter;
-            converter << sizeof(waypoints_x)/sizeof(waypoints_x[0]);
+            converter << 1;
             std_msgs::String message;
             message.data = "ANGULAR INFO: start " + converter.str();
             angular_publisher.publish(message);
@@ -309,19 +306,19 @@ void mobilityStateMachine(const ros::TimerEvent &)
                     saved_positions.pop_back();
                     state_machine_state =STATE_MACHINE_ROTATE;
                 }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && (ajax_waypoints.size() > 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && !search_controller.isSearchFinished() )
                 {
                     state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are ajax and we are currently searching with remaining waypoints
                 }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && (aeneas_waypoints.size() > 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && !search_controller.isSearchFinished() )
                 {
                     state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are aeneas and we are currently searching with remaining waypoints
                 }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && (ajax_waypoints.size() <= 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && search_controller.isSearchFinished() )
                 {
                     state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are ajax and we are currently searching with no remaining waypoints
                 }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && (aeneas_waypoints.size() <= 0) )
+                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && search_controller.isSearchFinished() )
                 {
                     state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are aeneas and we are currently searching with no remaining waypoints
                 }
@@ -350,20 +347,8 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_POP_WAYPOINT:
         {
             state_machine_msg.data = "POPPING WAYPOINT";
-            if (rover_name == "ajax")
-            {
-                goal_location.x = ajax_waypoints.back().x;
-                goal_location.y = ajax_waypoints.back().y;
-                goal_location.theta = computeGoalTheta(goal_location, current_location);
-                ajax_waypoints.pop_back();
-            }
-            if (rover_name == "aeneas")
-            {
-                goal_location.x = aeneas_waypoints.back().x;
-                goal_location.y = aeneas_waypoints.back().y;
-                goal_location.theta = computeGoalTheta(goal_location, current_location);
-                aeneas_waypoints.pop_back();
-            }
+            pose new_goal_location = search_controller.getNextWaypoint(current_location);
+            setGoalLocation(new_goal_location);
             state_machine_state = STATE_MACHINE_ROTATE;
             break;
         }
@@ -406,15 +391,13 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_CLAIM_TARGET:
         {
             state_machine_msg.data = "CLAIMING TARGET";
-            int result = searchQueue(); // search targets detected and avialble
+            int result = findIDClosestAvailableTarget(); // search targets detected and avialble
             if(result != -1)
             {
                 claimResource(result); // update targets detected and available array
                 id_claimed_target.data = result; // This should be where targetClaimed gets set.
                 roverCapacity=CAPACITY_CLAIMED; // Update status of rover
-                goal_location.x = target_positions[result].x;
-                goal_location.y = target_positions[result].y;
-                goal_location.theta = computeGoalTheta(goal_location, current_location);
+                setGoalLocation(target_positions[result]);
                 state_machine_state = STATE_MACHINE_ROTATE;
             }
             else
@@ -722,24 +705,54 @@ void homeResource(int resouceID) // simply publish (broadcast)
 }
 
 // search detected targets and find the shortest distance to your current position
-int searchQueue()
+int findIDClosestAvailableTarget()
 {
-    double minDistance = LONG_MAX;
-    int idClosestTarget = -1;
+    double min_distance = LONG_MAX;
+    int id_closest_target = -1;
+    vector<float> claimed_directions;
+    for(int ii = 0; ii < TOTAL_NUMBER_RESOURCES; ii++)
+    {
+        if(targets_currently_claimed[ii])
+        {
+            claimed_directions.push_back(atan2(target_positions[ii].y, target_positions[ii].x));
+        }
+    }
     for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++)
     {
         if(targets_available_detected[resource])
         {
-
-            double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
-            if(current_distance < minDistance)
+            if (claimed_directions.size() > 0)
             {
-                minDistance = current_distance;
-                idClosestTarget = resource;
+                bool flag = true;
+                for ( int itr = 0; itr < claimed_directions.size(); itr++ )
+                {
+                    if(fabs(claimed_directions[itr] - atan2(target_positions[resource].y - current_location.y, target_positions[resource].x - current_location.x)) < 0.25)
+                    {
+                        flag = false;
+                    }
+                }
+                if(flag)
+                {
+                    double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
+                    if(current_distance < min_distance)
+                    {
+                        min_distance = current_distance;
+                        id_closest_target = resource;
+                    }
+                }
+            }
+            else
+            {
+                double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
+                if(current_distance < min_distance)
+                {
+                    min_distance = current_distance;
+                    id_closest_target = resource;
+                }
             }
         }
     }
-    return idClosestTarget;
+    return id_closest_target;
 }
 
 /***********************
@@ -835,7 +848,7 @@ void claimMessage(vector<string> msg_parts) // claimed this, now remove from glo
 {
     std_msgs::Int16 tag_id = parseMessage(msg_parts);
 
-
+    targets_currently_claimed[tag_id.data] = true;
     targets_available[tag_id.data] = false;
     targets_available_detected[tag_id.data] = targets_detected[tag_id.data] && targets_available[tag_id.data];
 }
@@ -843,7 +856,7 @@ void claimMessage(vector<string> msg_parts) // claimed this, now remove from glo
 void unclaimMessage(vector<string> msg_parts) // unclaimed this, now add back to global queue
 {
     std_msgs::Int16 tag_id = parseMessage(msg_parts);
-
+    targets_currently_claimed[tag_id.data] = false;
     targets_available[tag_id.data] = true;
     targets_available_detected[tag_id.data] = targets_detected[tag_id.data] && targets_available[tag_id.data];
 }
@@ -852,6 +865,7 @@ void homeMessage(vector<string> msg_parts) // unclaimed this, now add back to gl
 {
     std_msgs::Int16 tag_id = parseMessage(msg_parts);
     targets_home[tag_id.data] = true;
+    targets_currently_claimed[tag_id.data] = false;
 }
 
 std_msgs::Int16 parseMessage(vector<string> msg_parts) {
