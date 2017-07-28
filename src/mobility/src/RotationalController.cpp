@@ -7,7 +7,7 @@
 
 RotationalController::RotationalController() : pid_error(RotationalError()), PIDController( this->pid_error )
 {
-    gains.KP = 1.75;
+    gains.KP = 0.75;
     gains.KI = 0.0;
     gains.KD = 0.0;
 }

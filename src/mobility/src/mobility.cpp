@@ -26,7 +26,7 @@
 // To handle shutdown signals so the node quits properly in response to "rosnode kill"
 
 #include <signal.h>
-#include <math.h> 
+#include <math.h>
 
 using namespace std;
 
@@ -306,33 +306,26 @@ void mobilityStateMachine(const ros::TimerEvent &)
                     saved_positions.pop_back();
                     state_machine_state =STATE_MACHINE_ROTATE;
                 }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && !search_controller.isSearchFinished() )
-                {
-                    state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are ajax and we are currently searching with remaining waypoints
-                }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && !search_controller.isSearchFinished() )
-                {
-                    state_machine_state = STATE_MACHINE_POP_WAYPOINT; // We are aeneas and we are currently searching with remaining waypoints
-                }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "ajax") && search_controller.isSearchFinished() )
-                {
-                    state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are ajax and we are currently searching with no remaining waypoints
-                }
-                else if ( (rover_current_mode == MODE_SEARCHER) && (rover_name == "aeneas") && search_controller.isSearchFinished() )
-                {
-                    state_machine_state = STATE_MACHINE_CHANGE_MODE; // We are aeneas and we are currently searching with no remaining waypoints
-                }
-                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CLAIMED) )
-                {
-                    state_machine_state = STATE_MACHINE_EXPLORE_NEARBY; // We have gone to where we thought the target should be but didn't find it there.
-                }
-                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
-                {
-                    state_machine_state = STATE_MACHINE_CHANGE_MODE;
-                }
-                else if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_CARRYING) )
-                {
-                    state_machine_state = STATE_MACHINE_EXPLORE_NEAR_ORIGIN; // We have gone to where we thought the origin should be but didn't find it there.
+                else {
+                    if (rover_current_mode == MODE_SEARCHER) {
+                        if (search_controller.isSearchFinished()) {
+                            state_machine_state = STATE_MACHINE_CHANGE_MODE;
+                        }
+                        else {
+                            state_machine_state = STATE_MACHINE_POP_WAYPOINT;
+                        }
+                    }
+                    else if (rover_current_mode == MODE_COLLECTOR) {
+                        if (roverCapacity == CAPACITY_CARRYING) {
+                            state_machine_state = STATE_MACHINE_EXPLORE_NEAR_ORIGIN;
+                        }
+                        else if (roverCapacity == CAPACITY_EMPTY) {
+                            state_machine_state = STATE_MACHINE_CLAIM_TARGET;
+                        }
+                        else {
+                            state_machine_state = STATE_MACHINE_EXPLORE_NEARBY;
+                        }
+                    }
                 }
             }
             else
@@ -441,6 +434,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
 
         state_machine_msg.data = "WAITING, " + converter.str();
     }
+    stateMachinePublish.publish(state_machine_msg);
 }
 
 void setVelocity(double linearVel, double angularVel)

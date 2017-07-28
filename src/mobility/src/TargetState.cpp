@@ -65,10 +65,4 @@ class TargetState
             state = Detected;
         }
     }
-
-    State getState()
-    {
-        return state;
-    }
-
 };
