@@ -6,6 +6,7 @@ class TargetController
 
 public:
     TargetController();
+    detectTargets();
 private:
     vector<TargetState> targets;
 };
