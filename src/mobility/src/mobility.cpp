@@ -55,13 +55,10 @@ bool avoiding_obstacle = false;
 vector <pose> saved_positions;
 
 std_msgs::Int16 id_claimed_target;
-std_msgs::Int16 id_claimed_target_once_detected; //ID of the claimed target once it has been detected by gatherer.
 
 const int HOME_APRIL_TAG_ID = 256;
 const int TOTAL_NUMBER_RESOURCES = 256;
 bool targets_detected[TOTAL_NUMBER_RESOURCES];      // array of booleans indicating whether each target ID has been found
-bool targets_available[TOTAL_NUMBER_RESOURCES];     // array of booleans indicating whether each target ID has not been claimed by a collector.
-bool targets_available_detected[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID has been found and has not been claimed by a collector.
 bool targets_home[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating wheter each target ID has been delivered to home base.
 bool targets_currently_claimed[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID is currently claimed by a collector.
 pose target_positions[TOTAL_NUMBER_RESOURCES];
@@ -96,7 +93,6 @@ int roverCapacity = CAPACITY_EMPTY;
 ros::Publisher velocityPublish;
 ros::Publisher stateMachinePublish;
 ros::Publisher status_publisher;
-ros::Publisher targetCollectedPublish;
 ros::Publisher targetPickUpPublish;
 ros::Publisher targetDropOffPublish;
 ros::Publisher angular_publisher;
@@ -148,13 +144,10 @@ void unclaimResource(int resouceID);
 void homeResource(int resouceID);
 bool isGoalReachedR(pose current_location, pose goal_location);
 bool isGoalReachedT(pose current_location, pose goal_location);
-
-void reportDetected(std_msgs::Int16 msg);
+int countTargetFlags(bool target_flag[]);
+void reportDetected(int tag_id);
 
 void detectedMessage(int tag_id, pose location);
-void claimMessage(int tag_id);
-void unclaimMessage(int tag_id);
-void homeMessage(int tag_id);
 
 int main(int argc, char **argv)
 {
@@ -164,8 +157,6 @@ int main(int argc, char **argv)
     rng = new random_numbers::RandomNumberGenerator(); // instantiate random number generator
 
     id_claimed_target.data = -1; // initialize target claimed
-    id_claimed_target_once_detected.data = -1; // intially the gatherer has no claimed targets so -1 indicates that the gatherer is either looking for a claimed target or there is no current claimed target.
-
     if (argc >= 2)
     {
         rover_name = argv[1];
@@ -192,7 +183,6 @@ int main(int argc, char **argv)
     status_publisher = mNH.advertise<std_msgs::String>((rover_name + "/status"), 1, true);
     velocityPublish = mNH.advertise<geometry_msgs::Twist>((rover_name + "/velocity"), 10);
     stateMachinePublish = mNH.advertise<std_msgs::String>((rover_name + "/state_machine"), 1, true);
-    targetCollectedPublish = mNH.advertise<std_msgs::Int16>(("targetsCollected"), 1, true);
     messagePublish = mNH.advertise<std_msgs::String>(("messages"), 10, true);
     targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetPickUpImage"), 1, true);
     targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetDropOffImage"), 1, true);
@@ -201,10 +191,6 @@ int main(int argc, char **argv)
     killSwitchTimer = mNH.createTimer(ros::Duration(kill_switch_timeout), killSwitchTimerEventHandler);
     stateMachineTimer = mNH.createTimer(ros::Duration(mobility_loop_time_step), mobilityStateMachine);
 
-    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
-    {
-        targets_available[i] = true;  // initially all targets are available to be claimed although none have been detected yet.
-    }
     ros::spin();
     return EXIT_SUCCESS;
 }
@@ -217,7 +203,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
     {
         if (transitions_to_auto == 0)
         {
-            // This is the firt time we have clicked the Autonomous Button. Log the time and increment the counter.
+            // This is the first time we have clicked the Autonomous Button. Log the time and increment the counter.
             transitions_to_auto++;
             time_stamp_transition_to_auto = ros::Time::now().toSec();
         }
@@ -445,39 +431,24 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message) {
         }
         else if (tag_id != HOME_APRIL_TAG_ID && !targets_home[tag_id]) {
             if (rover_current_mode == MODE_COLLECTOR) {
-                switch(roverCapacity){
-                case CAPACITY_CLAIMED:
-                    if (tag_id != id_claimed_target.data) {
-                        unclaimResource(id_claimed_target.data);
-                        claimResource(tag_id); // update targets detected and available array
-                        id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
-                    }
-                    break;
-                case CAPACITY_EMPTY:
-                    claimResource(tag_id); // update targets detected and available array
-                    id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
-                    break;
-                }
                 if (roverCapacity!=CAPACITY_CARRYING)
                 {
+                    if (roverCapacity == CAPACITY_CLAIMED && tag_id != id_claimed_target.data)
+                    {
+                         unclaimResource(id_claimed_target.data);
+                    }
+                    claimResource(tag_id); // update targets detected and available array
+                    id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
                     setVelocity(0.0,0.0); // stop the rover
                     roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
-                    id_claimed_target_once_detected.data = tag_id;
-                    // publish to scoring code
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                    // publish detected target
-                    targetCollectedPublish.publish(id_claimed_target_once_detected);
-                    // targetCollectedPublish.publish(targetDetected); // from UNM Code
                     state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
             }
             if (!targets_detected[tag_id]) {
-                std_msgs::Int16 tag;
-                tag.data = tag_id;
-                reportDetected(tag);
+                reportDetected(tag_id);
             }
         }
-
     }
 }
 
@@ -604,20 +575,13 @@ void setGoalLocation(pose new_goal_location)
     goal_location.theta = computeGoalTheta(goal_location, current_location);
 }
 
-void reportDetected(std_msgs::Int16 msg) // simply publish (broadcast)
+void reportDetected(int tag_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_detected_size = 0;
-    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
-    {
-        if(targets_detected[i])
-        {
-            targets_detected_size++;
-        }
-    }
+    int targets_detected_size = countTargetFlags(targets_detected);
     std::stringstream converter;
     converter <<
-        rover_name << " " << msg.data << " " <<
+        rover_name << " " << tag_id << " " <<
         current_location.x << " " << current_location.y << " " << current_location.theta << " " <<
         current_time-time_stamp_transition_to_auto << " " <<
         targets_detected_size;
@@ -649,21 +613,22 @@ void unclaimResource(int resouceID) // simply publish (broadcast)
 void homeResource(int resouceID) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_home_size = 0;
-
-    for(int i = 0; i < TOTAL_NUMBER_RESOURCES; i++)
-    {
-        if(targets_home[i])
-        {
-            targets_home_size++;
-        }
-    }
-
+    int targets_home_size = countTargetFlags(targets_home);
     std::stringstream converter;
     converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto << " " << targets_home_size;
     std_msgs::String message;
     message.data = "H " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
+}
+
+int countTargetFlags(bool target_flag[]) {
+    int flags_on = 0;
+    for (int i = 0; i < TOTAL_NUMBER_RESOURCES; i++) {
+        if (target_flag[i]) {
+            flags_on++;
+        }
+    }
+    return flags_on;
 }
 
 // search detected targets and find the shortest distance to your current position
@@ -681,7 +646,7 @@ int findIDClosestAvailableTarget()
     }
     for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++)
     {
-        if(targets_available_detected[resource])
+        if(targets_detected[resource] && !targets_home[resource] && !targets_currently_claimed[resource])
         {
             if (claimed_directions.size() > 0)
             {
@@ -753,15 +718,16 @@ void messageHandler(const std_msgs::String::ConstPtr& message)
         int tag_id = atoi(msg_parts[0].c_str());
         if(type == "C")
         {
-            claimMessage(tag_id);
+            targets_currently_claimed[tag_id] = true;
         }
         else if(type == "U")
         {
-            unclaimMessage(tag_id);
+            targets_currently_claimed[tag_id] = false;
         }
         else if(type == "H")
         {
-            homeMessage(tag_id);
+            targets_home[tag_id] = true;
+            targets_currently_claimed[tag_id] = false;
         }
     }
 }
@@ -773,31 +739,10 @@ void detectedMessage(int tag_id, pose location)
     target_positions[tag_id].y = location.y + 0.75 * sin(location.theta);
     target_positions[tag_id].theta = location.theta;
     targets_detected[tag_id] = true;
-    targets_available_detected[tag_id] = targets_detected[tag_id] && targets_available[tag_id];
     if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
     {
         state_machine_state = STATE_MACHINE_CHANGE_MODE;
     }
-}
-
-void claimMessage(int tag_id) // claimed this, now remove from global queue
-{
-    targets_currently_claimed[tag_id] = true;
-    targets_available[tag_id] = false;
-    targets_available_detected[tag_id] = targets_detected[tag_id] && targets_available[tag_id];
-}
-
-void unclaimMessage(int tag_id) // unclaimed this, now add back to global queue
-{
-    targets_currently_claimed[tag_id] = false;
-    targets_available[tag_id] = true;
-    targets_available_detected[tag_id] = targets_detected[tag_id] && targets_available[tag_id];
-}
-
-void homeMessage(int tag_id) // unclaimed this, now add back to global queue
-{
-    targets_home[tag_id] = true;
-    targets_currently_claimed[tag_id] = false;
 }
 
 void visitRandomLocation()
