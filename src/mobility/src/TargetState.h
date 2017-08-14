@@ -9,11 +9,22 @@ class TargetState
 public:
     TargetState(int identifier);
     pose getLocation();
-    State getState();
+    bool isInitial();
+    bool isDetected();
+    bool isClaimed();
+    bool isPickedUp();
+    bool isDroppedOff();
+    bool isAvailable();
+    void detect(pose location);
+    void claim();
+    void pickUp();
+    void dropOff();
+    void giveUp();
 
 private:
     int identifier;
     pose location;
+    pose *location_pointer;
     enum State
     {
         Initial,

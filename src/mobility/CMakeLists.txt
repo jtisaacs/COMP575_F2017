@@ -30,6 +30,7 @@ add_executable(
 	src/RotationalController.cpp
 	src/TranslationalController.cpp
 	src/SearchController.cpp
+	src/TargetState.cpp
 )
 
 add_dependencies(mobility ${catkin_EXPORTED_TARGETS})

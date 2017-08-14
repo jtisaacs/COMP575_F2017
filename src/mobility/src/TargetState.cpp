@@ -1,68 +1,73 @@
+#include <cstddef>
+#include <cmath>
 #include "TargetState.h"
 
-class TargetState
+TargetState::TargetState(int identifier)
 {
+    this->identifier = identifier;
+    location_pointer = &location;
+    location_pointer = NULL;
+    state = Initial;
+}
 
-    TargetState::TargetState(int identifier)
-    {
-        this->identifier = identifier;
-        location = NULL;
-        state = Initial;
-    }
+pose TargetState::getLocation()
+{
+    return location;
+}
 
-    pose getLocation()
-    {
-        return location;
-    }
+bool TargetState::isAvailable() {
+    return isDetected() && !isDroppedOff() && !isClaimed() && !isPickedUp();
+}
 
-    bool isInitial() {
-        return state == Initial;
-    }
+bool TargetState::isInitial() {
+    return state == Initial;
+}
 
-    bool isDetected() {
-        return state == Detected;
-    }
+bool TargetState::isDetected() {
+    return state == Detected;
+}
 
-    bool isClaimed() {
-        return state == Claimed;
-    }
+bool TargetState::isClaimed() {
+    return state == Claimed;
+}
 
-    bool isPickedUp() {
-        return state == PickedUp;
-    }
+bool TargetState::isPickedUp() {
+    return state == PickedUp;
+}
 
-    bool isDroppedOff() {
-        return state == DroppedOff;
-    }
+bool TargetState::isDroppedOff() {
+    return state == DroppedOff;
+}
 
-    void detect(pose location) {
-        if (isInitial()) {
-            this->location = location;
-            state = Detected;
-        }
+void TargetState::detect(pose location) {
+    if (isInitial()) {
+        this->location.x = location.x + 0.75 * cos(location.theta);
+        this->location.y = location.y + 0.75 * sin(location.theta);
+        this->location.theta = location.theta;
+        state = Detected;
     }
+}
 
-    void claim() {
-        if (isDetected()) {
-            state = Claimed;
-        }
+void TargetState::claim() {
+    if (isDetected()) {
+        state = Claimed;
     }
+}
 
-    void pickUp() {
-        if (isClaimed()) {
-            state = PickedUp;
-        }
+void TargetState::pickUp() {
+    if (isClaimed()) {
+        state = PickedUp;
     }
+}
 
-    void dropOff() {
-        if (isPickedUp()) {
-            state = DroppedOff;
-        }
+void TargetState::dropOff() {
+    if (isPickedUp()) {
+        state = DroppedOff;
     }
+}
 
-    void giveUp() {
-        if (isClaimed()) {
-            state = Detected;
-        }
+void TargetState::giveUp() {
+    if (isClaimed()) {
+        state = Detected;
     }
-};
+}

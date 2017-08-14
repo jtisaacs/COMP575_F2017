@@ -19,6 +19,7 @@
 #include "TranslationalController.h"
 #include "SearchController.h"
 #include "Pose.h"
+#include "TargetState.h"
 
 // Custom messages
 #include <shared_messages/TagsImage.h>
@@ -54,14 +55,11 @@ pose goal_location;
 bool avoiding_obstacle = false;
 vector <pose> saved_positions;
 
-std_msgs::Int16 id_claimed_target;
+int claimed_target_id;
 
 const int HOME_APRIL_TAG_ID = 256;
 const int TOTAL_NUMBER_RESOURCES = 256;
-bool targets_detected[TOTAL_NUMBER_RESOURCES];      // array of booleans indicating whether each target ID has been found
-bool targets_home[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating wheter each target ID has been delivered to home base.
-bool targets_currently_claimed[TOTAL_NUMBER_RESOURCES]; // array of booleans indicating whether each target ID is currently claimed by a collector.
-pose target_positions[TOTAL_NUMBER_RESOURCES];
+vector<TargetState> targets;
 
 int transitions_to_auto = 0;
 double time_stamp_transition_to_auto = 0.0;
@@ -97,6 +95,7 @@ ros::Publisher targetPickUpPublish;
 ros::Publisher targetDropOffPublish;
 ros::Publisher angular_publisher;
 ros::Publisher messagePublish;
+ros::Publisher debug_publisher;
 
 //Subscribers
 ros::Subscriber joySubscriber;
@@ -139,15 +138,12 @@ void debugRotate();
 void debugTranslate(double distance_);
 void debugRandom();
 void visitRandomLocation();
-void claimResource(int resouceID);
-void unclaimResource(int resouceID);
-void homeResource(int resouceID);
+void claimResource(int resource_id);
+void unclaimResource(int resource_id);
+void homeResource(int resource_id);
 bool isGoalReachedR(pose current_location, pose goal_location);
 bool isGoalReachedT(pose current_location, pose goal_location);
-int countTargetFlags(bool target_flag[]);
 void reportDetected(int tag_id);
-
-void detectedMessage(int tag_id, pose location);
 
 int main(int argc, char **argv)
 {
@@ -156,7 +152,7 @@ int main(int argc, char **argv)
 
     rng = new random_numbers::RandomNumberGenerator(); // instantiate random number generator
 
-    id_claimed_target.data = -1; // initialize target claimed
+    claimed_target_id = -1; // initialize target claimed
     if (argc >= 2)
     {
         rover_name = argv[1];
@@ -167,6 +163,9 @@ int main(int argc, char **argv)
         cout << "No Name Selected. Default is: " << rover_name << endl;
     }
     search_controller = SearchController(rover_name);
+    for (int i = 0; i < TOTAL_NUMBER_RESOURCES; i++) {
+        targets.push_back(TargetState(i+1));
+    }
     // NoSignalHandler so we can catch SIGINT ourselves and shutdown the node
     ros::init(argc, argv, (rover_name + "_MOBILITY"), ros::init_options::NoSigintHandler);
     ros::NodeHandle mNH;
@@ -190,6 +189,7 @@ int main(int argc, char **argv)
     publish_status_timer = mNH.createTimer(ros::Duration(status_publish_interval), publishStatusTimerEventHandler);
     killSwitchTimer = mNH.createTimer(ros::Duration(kill_switch_timeout), killSwitchTimerEventHandler);
     stateMachineTimer = mNH.createTimer(ros::Duration(mobility_loop_time_step), mobilityStateMachine);
+    debug_publisher = mNH.advertise<std_msgs::String>("/debug", 1, true);
 
     ros::spin();
     return EXIT_SUCCESS;
@@ -237,13 +237,14 @@ void mobilityStateMachine(const ros::TimerEvent &)
             }
             else
             {
-                linear_velocity = rng->uniformReal(-.02, 0.02);
+                linear_velocity = rng->uniformReal(-0.02, 0.02);
+                goal_location.theta = computeGoalTheta(goal_location, current_location);
                 angular_velocity = rotational_controller.calculateVelocity(current_location, goal_location);
             }
             setVelocity(linear_velocity, angular_velocity);
 
             std::stringstream converter;
-            converter << 1;
+            converter << "Angular Velocity: " << angular_velocity << "Goal Theta: " << goal_location.theta << "Current Theta: " << current_location.theta << " Current Error: " << rotational_controller.getCurrentError();
             std_msgs::String message;
             message.data = "ANGULAR INFO: start " + converter.str();
             angular_publisher.publish(message);
@@ -319,7 +320,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_EXPLORE_NEARBY:
         {
             state_machine_msg.data = "EXPORING NEARBY";
-            if (targets_home[id_claimed_target.data])
+            if (targets[claimed_target_id].isDroppedOff())
             {
                 // This means that someone else has taken this target home alread, so something went wrong.  Drop it and claim a new target.
                 state_machine_state = STATE_MACHINE_CLAIM_TARGET;
@@ -329,8 +330,8 @@ void mobilityStateMachine(const ros::TimerEvent &)
                 // It must be around here somewhere.  Keep searching for it.
                 double r = rng->uniformReal(0.0, 1.0);
                 double t = rng->uniformReal(0, 2 * M_PI);
-                goal_location.x = target_positions[id_claimed_target.data].x + r * cos(t); // Explore in a 1m circle around where you think the target is located.
-                goal_location.y = target_positions[id_claimed_target.data].y + r * sin(t);
+                goal_location.x = targets[claimed_target_id].getLocation().x + r * cos(t); // Explore in a 1m circle around where you think the target is located.
+                goal_location.y = targets[claimed_target_id].getLocation().y + r * sin(t);
                 setGoalLocation(goal_location);
                 state_machine_state = STATE_MACHINE_ROTATE;
             }
@@ -352,9 +353,9 @@ void mobilityStateMachine(const ros::TimerEvent &)
             if(result != -1)
             {
                 claimResource(result); // update targets detected and available array
-                id_claimed_target.data = result; // This should be where targetClaimed gets set.
+                claimed_target_id = result; // This should be where targetClaimed gets set.
                 roverCapacity=CAPACITY_CLAIMED; // Update status of rover
-                setGoalLocation(target_positions[result]);
+                setGoalLocation(targets[result].getLocation());
                 state_machine_state = STATE_MACHINE_ROTATE;
             }
             else
@@ -423,30 +424,33 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message) {
         int tag_id = message->tags.data[message_index];
         if (tag_id == HOME_APRIL_TAG_ID && roverCapacity==CAPACITY_CARRYING) {
             setVelocity(0.0,0.0); // stop the rover
-            homeResource(id_claimed_target.data);
+            homeResource(claimed_target_id);
             targetDropOffPublish.publish(message->image);
             roverCapacity = CAPACITY_EMPTY;
-            id_claimed_target.data = -1;
+            claimed_target_id = -1;
             state_machine_state = STATE_MACHINE_CLAIM_TARGET;
         }
-        else if (tag_id != HOME_APRIL_TAG_ID && !targets_home[tag_id]) {
+        else if (tag_id != HOME_APRIL_TAG_ID && !targets[tag_id].isDroppedOff() && !targets[tag_id].isPickedUp() && !targets[tag_id].isClaimed()) {
+            if (targets[tag_id].isInitial()) {
+                reportDetected(tag_id);
+            }
             if (rover_current_mode == MODE_COLLECTOR) {
-                if (roverCapacity!=CAPACITY_CARRYING)
-                {
-                    if (roverCapacity == CAPACITY_CLAIMED && tag_id != id_claimed_target.data)
-                    {
-                         unclaimResource(id_claimed_target.data);
+                if (roverCapacity != CAPACITY_CARRYING) {
+                    if (roverCapacity == CAPACITY_CLAIMED && tag_id != claimed_target_id && targets[tag_id].isDetected()) {
+                        unclaimResource(claimed_target_id);
+                        roverCapacity = CAPACITY_EMPTY;
                     }
-                    claimResource(tag_id); // update targets detected and available array
-                    id_claimed_target.data = tag_id; // This should be where targetClaimed gets set.
-                    setVelocity(0.0,0.0); // stop the rover
-                    roverCapacity=CAPACITY_CARRYING; // set the capacity of this rover to carrying
+                    if (roverCapacity == CAPACITY_EMPTY  && targets[tag_id].isDetected()) {
+                        claimResource(tag_id); // update targets detected and available array
+                        claimed_target_id = tag_id; // This should be where targetClaimed gets set.
+                    }
+                    targets[tag_id].claim();
+                    setVelocity(0.0, 0.0); // stop the rover
+                    targets[tag_id].pickUp();
+                    roverCapacity = CAPACITY_CARRYING; // set the capacity of this rover to carrying
                     targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
                     state_machine_state = STATE_MACHINE_RETURN_HOME;
                 }
-            }
-            if (!targets_detected[tag_id]) {
-                reportDetected(tag_id);
             }
         }
     }
@@ -495,6 +499,7 @@ void obstacleHandler(const std_msgs::UInt8::ConstPtr &message)
                 goal_location.x = current_location.x + (0.75 * cos(goal_location.theta));
                 goal_location.y = current_location.y + (0.75 * sin(goal_location.theta));
             }
+
             avoiding_obstacle = true;
             //switch to reset rotate pid to trigger collision avoidance
             state_machine_state = STATE_MACHINE_ROTATE;
@@ -575,13 +580,20 @@ void setGoalLocation(pose new_goal_location)
     goal_location.theta = computeGoalTheta(goal_location, current_location);
 }
 
-void reportDetected(int tag_id) // simply publish (broadcast)
+void reportDetected(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_detected_size = countTargetFlags(targets_detected);
+    int targets_detected_size = 0;
+    for(int tag_id = 0; tag_id < TOTAL_NUMBER_RESOURCES; tag_id++)
+    {
+        if(!targets[tag_id].isInitial())
+        {
+            targets_detected_size++;
+        }
+    }
     std::stringstream converter;
     converter <<
-        rover_name << " " << tag_id << " " <<
+        rover_name << " " << resource_id << " " <<
         current_location.x << " " << current_location.y << " " << current_location.theta << " " <<
         current_time-time_stamp_transition_to_auto << " " <<
         targets_detected_size;
@@ -590,45 +602,42 @@ void reportDetected(int tag_id) // simply publish (broadcast)
     messagePublish.publish(message);
 }
 
-void claimResource(int resouceID) // simply publish (broadcast) 
+void claimResource(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
+    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
     std_msgs::String message;
     message.data = "C " + converter.str(); // claim this token for pickup
     messagePublish.publish(message);
 }
 
-void unclaimResource(int resouceID) // simply publish (broadcast)
+void unclaimResource(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
+    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
     std_msgs::String message;
     message.data = "U " + converter.str(); // unclaim this token for pickup
     messagePublish.publish(message);
 }
 
-void homeResource(int resouceID) // simply publish (broadcast)
+void homeResource(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_home_size = countTargetFlags(targets_home);
-    std::stringstream converter;
-    converter << resouceID << " " << rover_name << " " << current_time-time_stamp_transition_to_auto << " " << targets_home_size;
-    std_msgs::String message;
-    message.data = "H " + converter.str(); // unclaim this token for pickup
-    messagePublish.publish(message);
-}
-
-int countTargetFlags(bool target_flag[]) {
-    int flags_on = 0;
-    for (int i = 0; i < TOTAL_NUMBER_RESOURCES; i++) {
-        if (target_flag[i]) {
-            flags_on++;
+    int targets_home_size = 0;
+    for(int tag_id = 0; tag_id < TOTAL_NUMBER_RESOURCES; tag_id++)
+    {
+        if(targets[tag_id].isDroppedOff())
+        {
+            targets_home_size++;
         }
     }
-    return flags_on;
+    std::stringstream converter;
+    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto << " " << targets_home_size;
+    std_msgs::String message;
+    message.data = "H " + converter.str();
+    messagePublish.publish(message);
 }
 
 // search detected targets and find the shortest distance to your current position
@@ -636,48 +645,64 @@ int findIDClosestAvailableTarget()
 {
     double min_distance = LONG_MAX;
     int id_closest_target = -1;
+    double min_distance_backup = LONG_MAX;
+    int id_closest_target_backup = -1;
     vector<float> claimed_directions;
     for(int ii = 0; ii < TOTAL_NUMBER_RESOURCES; ii++)
     {
-        if(targets_currently_claimed[ii])
+        if(targets[ii].isClaimed() || targets[ii].isPickedUp())
         {
-            claimed_directions.push_back(atan2(target_positions[ii].y, target_positions[ii].x));
+            // This means a robot is on the path between the resource and home so we should avoid targets in this direction.
+            claimed_directions.push_back(atan2(targets[ii].getLocation().y, targets[ii].getLocation().x));
         }
     }
     for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++)
     {
-        if(targets_detected[resource] && !targets_home[resource] && !targets_currently_claimed[resource])
+        if(targets[resource].isDetected())
         {
-            if (claimed_directions.size() > 0)
+            if ( claimed_directions.size() > 0 )
             {
                 bool flag = true;
                 for ( int itr = 0; itr < claimed_directions.size(); itr++ )
                 {
-                    if(fabs(claimed_directions[itr] - atan2(target_positions[resource].y - current_location.y, target_positions[resource].x - current_location.x)) < 0.25)
+                    if( fabs(claimed_directions[itr] - atan2(targets[resource].getLocation().y - current_location.y, targets[resource].getLocation().x - current_location.x)) < 0.25)
                     {
                         flag = false;
                     }
                 }
                 if(flag)
                 {
-                    double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
-                    if(current_distance < min_distance)
+                    double current_distance = computeDistanceBetweenWaypoints(targets[resource].getLocation(), current_location);
+                    if( current_distance < min_distance )
                     {
                         min_distance = current_distance;
                         id_closest_target = resource;
                     }
                 }
+                else
+                {
+                    double current_distance = computeDistanceBetweenWaypoints(targets[resource].getLocation(), current_location);
+                    if( current_distance < min_distance_backup )
+                    {
+                        min_distance_backup = current_distance;
+                        id_closest_target_backup = resource;
+                    }
+                }
             }
             else
             {
-                double current_distance = computeDistanceBetweenWaypoints(target_positions[resource], current_location);
-                if(current_distance < min_distance)
+                double current_distance = computeDistanceBetweenWaypoints(targets[resource].getLocation(), current_location);
+                if( current_distance < min_distance )
                 {
                     min_distance = current_distance;
                     id_closest_target = resource;
                 }
             }
         }
+    }
+    if( id_closest_target==-1 && claimed_directions.size() > 0)
+    {
+        id_closest_target = id_closest_target_backup;
     }
     return id_closest_target;
 }
@@ -687,6 +712,7 @@ int findIDClosestAvailableTarget()
  ************************/
 void messageHandler(const std_msgs::String::ConstPtr& message)
 {
+    std_msgs::String debug_msg;
     string msg = message->data;
 
     size_t type_pos = msg.find_first_of(" ");
@@ -711,37 +737,44 @@ void messageHandler(const std_msgs::String::ConstPtr& message)
         location.x = atof(msg_parts[2].c_str());
         location.y = atof(msg_parts[3].c_str());
         location.theta = atof(msg_parts[4].c_str());
-        detectedMessage(tag_id,location);
+        targets[tag_id].detect(location);
+        if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
+        {
+            state_machine_state = STATE_MACHINE_CHANGE_MODE;
+        }
     }
     else
     {
-        int tag_id = atoi(msg_parts[0].c_str());
+//        int tag_id = atoi(msg_parts[0].c_str());
+        int tag_id = -1;
+
+        stringstream converter;
+
+        converter << msg_parts[0];
+        converter >> tag_id;
+        converter.str("");
+        converter.clear();
         if(type == "C")
         {
-            targets_currently_claimed[tag_id] = true;
+            targets[tag_id].claim();
         }
         else if(type == "U")
         {
-            targets_currently_claimed[tag_id] = false;
+          targets[tag_id].giveUp();
         }
         else if(type == "H")
         {
-            targets_home[tag_id] = true;
-            targets_currently_claimed[tag_id] = false;
-        }
-    }
-}
+            targets[tag_id].dropOff();
+            if (targets[tag_id].isDroppedOff())
+            {
+                debug_msg.data = "We are in the H section of message handler and target was dropped off.";
+            } else
+            {
+                debug_msg.data = "We are in the H section of message handler and target was not dropped off.";
+            }
 
-void detectedMessage(int tag_id, pose location)
-{   
-    // lookup tables
-    target_positions[tag_id].x = location.x + 0.75 * cos(location.theta); // project forward by 0.5 meters in the direction that the finding rover was facing when the target was detected
-    target_positions[tag_id].y = location.y + 0.75 * sin(location.theta);
-    target_positions[tag_id].theta = location.theta;
-    targets_detected[tag_id] = true;
-    if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
-    {
-        state_machine_state = STATE_MACHINE_CHANGE_MODE;
+            debug_publisher.publish(debug_msg);
+        }
     }
 }
 

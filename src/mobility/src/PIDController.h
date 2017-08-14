@@ -9,13 +9,14 @@ class PIDController
 
 public:
     PIDController( PIDError &p ) : pid_error(p) {}
-    float calculateVelocity(pose current_location, pose goal_location);
+    virtual float calculateVelocity(pose current_location, pose goal_location)=0;
+    void updateErrorIntegrator(pose goal_location, float current_error);
     float getCurrentError();
     virtual bool isGoalChanged(pose goal_location)=0;
     virtual bool isGoalReached(pose current_location, pose goal_location)=0;
-
+    float current_error;
 private:
-    void updateErrorIntegrator(pose goal_location, float current_error);
+
 
 protected:
     static const float FLOAT_COMPARISON_THRESHOLD = 1E-6;
