@@ -20,6 +20,7 @@ public:
     void pickUp();
     void dropOff();
     void giveUp();
+    int getState();
 
 private:
     int identifier;

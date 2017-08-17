@@ -1,5 +1,7 @@
 #include <cstddef>
 #include <cmath>
+#include <string>
+#include <sstream>
 #include "TargetState.h"
 
 TargetState::TargetState(int identifier)
@@ -41,8 +43,8 @@ bool TargetState::isDroppedOff() {
 
 void TargetState::detect(pose location) {
     if (isInitial()) {
-        this->location.x = location.x + 0.75 * cos(location.theta);
-        this->location.y = location.y + 0.75 * sin(location.theta);
+        this->location.x = location.x;
+        this->location.y = location.y;
         this->location.theta = location.theta;
         state = Detected;
     }
@@ -55,7 +57,7 @@ void TargetState::claim() {
 }
 
 void TargetState::pickUp() {
-    if (isClaimed()) {
+    if (isClaimed() || isDetected()) {
         state = PickedUp;
     }
 }
@@ -70,4 +72,8 @@ void TargetState::giveUp() {
     if (isClaimed()) {
         state = Detected;
     }
+}
+
+int TargetState::getState() {
+    return state;
 }

@@ -91,6 +91,7 @@ int roverCapacity = CAPACITY_EMPTY;
 ros::Publisher velocityPublish;
 ros::Publisher stateMachinePublish;
 ros::Publisher status_publisher;
+ros::Publisher target_collected_publisher;
 ros::Publisher targetPickUpPublish;
 ros::Publisher targetDropOffPublish;
 ros::Publisher angular_publisher;
@@ -141,6 +142,7 @@ void visitRandomLocation();
 void claimResource(int resource_id);
 void unclaimResource(int resource_id);
 void homeResource(int resource_id);
+void pickUpResource(int resource_id);
 bool isGoalReachedR(pose current_location, pose goal_location);
 bool isGoalReachedT(pose current_location, pose goal_location);
 void reportDetected(int tag_id);
@@ -183,6 +185,7 @@ int main(int argc, char **argv)
     velocityPublish = mNH.advertise<geometry_msgs::Twist>((rover_name + "/velocity"), 10);
     stateMachinePublish = mNH.advertise<std_msgs::String>((rover_name + "/state_machine"), 1, true);
     messagePublish = mNH.advertise<std_msgs::String>(("messages"), 10, true);
+    target_collected_publisher = mNH.advertise<std_msgs::Int16>(("targetsCollected"), 1, true);
     targetPickUpPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetPickUpImage"), 1, true);
     targetDropOffPublish = mNH.advertise<sensor_msgs::Image>((rover_name + "/targetDropOffImage"), 1, true);
     angular_publisher = mNH.advertise<std_msgs::String>((rover_name + "/angular"),1,true);
@@ -197,6 +200,17 @@ int main(int argc, char **argv)
 
 void mobilityStateMachine(const ros::TimerEvent &)
 {
+    if(roverCapacity == CAPACITY_CARRYING)
+    {
+        // Do nothing.  We are already carrying a target so don't pick up another one.
+        if (targets[claimed_target_id].isDroppedOff()) {
+            roverCapacity = CAPACITY_EMPTY;
+            claimed_target_id = -1;
+            state_machine_state = STATE_MACHINE_CLAIM_TARGET;
+
+        }
+    }
+
     std_msgs::String state_machine_msg;
 
     if ((simulation_mode == 2 || simulation_mode == 3)) // Robot is in automode
@@ -312,6 +326,11 @@ void mobilityStateMachine(const ros::TimerEvent &)
         }
         case STATE_MACHINE_CHANGE_MODE:
         {
+            std_msgs::String message;
+            std::stringstream converter;
+            converter <<rover_name;
+            message.data = converter.str() +" is switching to Collector"; // unclaim this token for pickup
+            messagePublish.publish(message);
             state_machine_msg.data = "CHANGING MODE";
             rover_current_mode = MODE_COLLECTOR; // change mode from lawnmower searcher to collector.
             state_machine_state = STATE_MACHINE_CLAIM_TARGET;
@@ -319,10 +338,34 @@ void mobilityStateMachine(const ros::TimerEvent &)
         }
         case STATE_MACHINE_EXPLORE_NEARBY:
         {
+            std_msgs::String message;
+            std::stringstream converter;
+            converter << "The rover is in Explore Nearby State and the state of target #" << claimed_target_id << " is ";
+            if (targets[claimed_target_id].isInitial()) {
+                converter << "Initial";
+            }
+            else if (targets[claimed_target_id].isDetected()) {
+                converter << "Detected";
+            }
+            else if (targets[claimed_target_id].isPickedUp()) {
+                converter << "Picked Up";
+            }
+            else if (targets[claimed_target_id].isClaimed()) {
+                converter << "Claimed";
+            }
+            else if (targets[claimed_target_id].isDroppedOff()) {
+                converter << "Dropped Off";
+            }
+            else {
+                converter << "Unknown";
+            }
+            message.data = converter.str(); // unclaim this token for pickup
+            messagePublish.publish(message);
             state_machine_msg.data = "EXPORING NEARBY";
-            if (targets[claimed_target_id].isDroppedOff())
+            if (targets[claimed_target_id].isDroppedOff() || targets[claimed_target_id].isPickedUp())
             {
-                // This means that someone else has taken this target home alread, so something went wrong.  Drop it and claim a new target.
+                // This means that someone else has taken this target home already, so something went wrong.  Drop it and claim a new target.
+
                 state_machine_state = STATE_MACHINE_CLAIM_TARGET;
             }
             else
@@ -406,7 +449,7 @@ void setVelocity(double linearVel, double angularVel)
 {
     geometry_msgs::Twist velocity;
     // Stopping and starting the timer causes it to start counting from 0 again.
-    // As long as this is called before the kill swith timer reaches kill_switch_timeout seconds
+    // As long as this is called before the kill switch timer reaches kill_switch_timeout seconds
     // the rover's kill switch wont be called.
     killSwitchTimer.stop();
     killSwitchTimer.start();
@@ -423,33 +466,95 @@ void targetHandler(const shared_messages::TagsImage::ConstPtr &message) {
     for (int message_index = 0; message_index < message->tags.data.size(); message_index++) {
         int tag_id = message->tags.data[message_index];
         if (tag_id == HOME_APRIL_TAG_ID && roverCapacity==CAPACITY_CARRYING) {
-            setVelocity(0.0,0.0); // stop the rover
-            homeResource(claimed_target_id);
-            targetDropOffPublish.publish(message->image);
+
+            if (claimed_target_id != -1 && targets[claimed_target_id].isPickedUp()) {
+                setVelocity(0.0, 0.0); // stop the rover
+                homeResource(claimed_target_id);
+                targetDropOffPublish.publish(message->image);
+            }
             roverCapacity = CAPACITY_EMPTY;
             claimed_target_id = -1;
             state_machine_state = STATE_MACHINE_CLAIM_TARGET;
         }
-        else if (tag_id != HOME_APRIL_TAG_ID && !targets[tag_id].isDroppedOff() && !targets[tag_id].isPickedUp() && !targets[tag_id].isClaimed()) {
+        else if (tag_id != HOME_APRIL_TAG_ID && (targets[tag_id].isInitial() || targets[tag_id].isDetected() || targets[tag_id].isClaimed())) {
             if (targets[tag_id].isInitial()) {
                 reportDetected(tag_id);
             }
             if (rover_current_mode == MODE_COLLECTOR) {
-                if (roverCapacity != CAPACITY_CARRYING) {
-                    if (roverCapacity == CAPACITY_CLAIMED && tag_id != claimed_target_id && targets[tag_id].isDetected()) {
+                if (roverCapacity == CAPACITY_EMPTY)
+                {
+                    if(targets[tag_id].isClaimed())
+                    {
+                        // Do nothing here because someone else has claimed this target and they are on the way.
+                    }
+                    else if (targets[tag_id].isDetected())
+                    {
+                        setVelocity(0.0, 0.0); // stop the rover
+                        pickUpResource(tag_id);
+                        claimed_target_id = tag_id;
+                        roverCapacity = CAPACITY_CARRYING; // set the capacity of this rover to carrying
+                        targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
+                        std_msgs::Int16 claimed_id;
+                        claimed_id.data = message->tags.data[message_index];
+                        target_collected_publisher.publish(claimed_id);
+                        state_machine_state = STATE_MACHINE_RETURN_HOME;
+                    }
+                }
+                else if (roverCapacity == CAPACITY_CLAIMED)
+                {
+                    if(targets[tag_id].isClaimed())
+                    {
+                        if(tag_id == claimed_target_id)
+                        {
+                            // This is the target that we have claimed.
+                            setVelocity(0.0, 0.0); // stop the rover
+                            pickUpResource(tag_id);
+                            roverCapacity = CAPACITY_CARRYING; // set the capacity of this rover to carrying
+                            targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
+                            std_msgs::Int16 claimed_id;
+                            claimed_id.data = message->tags.data[message_index];
+                            target_collected_publisher.publish(claimed_id);
+                            state_machine_state = STATE_MACHINE_RETURN_HOME;
+                        }
+                        else if (tag_id != claimed_target_id)
+                        {
+                            // Do nothing here because someone else has claimed this target and they are on the way.
+                        }
+                    }
+                    else if (targets[tag_id].isDetected())
+                    {
                         unclaimResource(claimed_target_id);
+                        setVelocity(0.0, 0.0); // stop the rover
+                        claimed_target_id = tag_id;
+                        pickUpResource(tag_id);
+                        roverCapacity = CAPACITY_CARRYING; // set the capacity of this rover to carrying
+                        targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
+                        std_msgs::Int16 claimed_id;
+                        claimed_id.data = message->tags.data[message_index];
+                        target_collected_publisher.publish(claimed_id);
+                        state_machine_state = STATE_MACHINE_RETURN_HOME;
+                    }
+                }
+                else if(roverCapacity == CAPACITY_CARRYING)
+                {
+                    // Do nothing.  We are already carrying a target so don't pick up another one.
+                    if (targets[claimed_target_id].isDroppedOff()) {
                         roverCapacity = CAPACITY_EMPTY;
+                        claimed_target_id = -1;
+                        state_machine_state = STATE_MACHINE_CLAIM_TARGET;
+
                     }
-                    if (roverCapacity == CAPACITY_EMPTY  && targets[tag_id].isDetected()) {
-                        claimResource(tag_id); // update targets detected and available array
-                        claimed_target_id = tag_id; // This should be where targetClaimed gets set.
-                    }
-                    targets[tag_id].claim();
-                    setVelocity(0.0, 0.0); // stop the rover
-                    targets[tag_id].pickUp();
-                    roverCapacity = CAPACITY_CARRYING; // set the capacity of this rover to carrying
-                    targetPickUpPublish.publish(message->image); //publish the image that you are picking up.
-                    state_machine_state = STATE_MACHINE_RETURN_HOME;
+                }
+
+            }
+            if(roverCapacity == CAPACITY_CARRYING)
+            {
+                // Do nothing.  We are already carrying a target so don't pick up another one.
+                if (targets[claimed_target_id].isDroppedOff()) {
+                    roverCapacity = CAPACITY_EMPTY;
+                    claimed_target_id = -1;
+                    state_machine_state = STATE_MACHINE_CLAIM_TARGET;
+
                 }
             }
         }
@@ -583,7 +688,7 @@ void setGoalLocation(pose new_goal_location)
 void reportDetected(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_detected_size = 0;
+    int targets_detected_size = 1;
     for(int tag_id = 0; tag_id < TOTAL_NUMBER_RESOURCES; tag_id++)
     {
         if(!targets[tag_id].isInitial())
@@ -594,7 +699,7 @@ void reportDetected(int resource_id) // simply publish (broadcast)
     std::stringstream converter;
     converter <<
         rover_name << " " << resource_id << " " <<
-        current_location.x << " " << current_location.y << " " << current_location.theta << " " <<
+        current_location.x + 0.75 * cos(current_location.theta)<< " " << current_location.y + 0.75 * sin(current_location.theta) << " " << current_location.theta << " " <<
         current_time-time_stamp_transition_to_auto << " " <<
         targets_detected_size;
     std_msgs::String message;
@@ -606,7 +711,8 @@ void claimResource(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
     std::stringstream converter;
-    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
+    pose location = targets[resource_id].getLocation();
+    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto << " " << location.x << " " << location.y << " " << location.theta;
     std_msgs::String message;
     message.data = "C " + converter.str(); // claim this token for pickup
     messagePublish.publish(message);
@@ -622,10 +728,19 @@ void unclaimResource(int resource_id) // simply publish (broadcast)
     messagePublish.publish(message);
 }
 
+void pickUpResource(int resource_id) {
+    double current_time = ros::Time::now().toSec();
+    std::stringstream converter;
+    converter << resource_id << " " << rover_name << " " << current_time-time_stamp_transition_to_auto;
+    std_msgs::String message;
+    message.data = "P " + converter.str(); // unclaim this token for pickup
+    messagePublish.publish(message);
+}
+
 void homeResource(int resource_id) // simply publish (broadcast)
 {
     double current_time = ros::Time::now().toSec();
-    int targets_home_size = 0;
+    int targets_home_size = 1;
     for(int tag_id = 0; tag_id < TOTAL_NUMBER_RESOURCES; tag_id++)
     {
         if(targets[tag_id].isDroppedOff())
@@ -656,10 +771,8 @@ int findIDClosestAvailableTarget()
             claimed_directions.push_back(atan2(targets[ii].getLocation().y, targets[ii].getLocation().x));
         }
     }
-    for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++)
-    {
-        if(targets[resource].isDetected())
-        {
+    for(int resource = 0; resource < TOTAL_NUMBER_RESOURCES; resource++) {
+        if (targets[resource].isDetected()) {
             if ( claimed_directions.size() > 0 )
             {
                 bool flag = true;
@@ -740,7 +853,7 @@ void messageHandler(const std_msgs::String::ConstPtr& message)
         targets[tag_id].detect(location);
         if ( (rover_current_mode == MODE_COLLECTOR) && (roverCapacity == CAPACITY_EMPTY) )
         {
-            state_machine_state = STATE_MACHINE_CHANGE_MODE;
+            state_machine_state = STATE_MACHINE_CLAIM_TARGET;
         }
     }
     else
@@ -754,26 +867,19 @@ void messageHandler(const std_msgs::String::ConstPtr& message)
         converter >> tag_id;
         converter.str("");
         converter.clear();
-        if(type == "C")
-        {
+        if(type == "C") {
             targets[tag_id].claim();
         }
-        else if(type == "U")
-        {
-          targets[tag_id].giveUp();
-        }
-        else if(type == "H")
-        {
-            targets[tag_id].dropOff();
-            if (targets[tag_id].isDroppedOff())
-            {
-                debug_msg.data = "We are in the H section of message handler and target was dropped off.";
-            } else
-            {
-                debug_msg.data = "We are in the H section of message handler and target was not dropped off.";
+        else if(type == "U") {
+            if (tag_id != -1) {
+                targets[tag_id].giveUp();
             }
-
-            debug_publisher.publish(debug_msg);
+        }
+        else if (type == "P") {
+            targets[tag_id].pickUp();
+        }
+        else if(type == "H") {
+            targets[tag_id].dropOff();
         }
     }
 }
