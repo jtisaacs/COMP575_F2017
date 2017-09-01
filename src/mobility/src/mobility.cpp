@@ -42,6 +42,7 @@ SearchController search_controller;
 string rover_name;
 char host[128];
 bool is_published_name = false;
+bool LAWN_MOWER_SEARCH = true;
 
 int simulation_mode = 0;
 float mobility_loop_time_step = 0.1;
@@ -226,7 +227,7 @@ void mobilityStateMachine(const ros::TimerEvent &)
         case STATE_MACHINE_INITIALIZE:
         {
             state_machine_msg.data = "INITIALIZING";
-            if (rover_name == "ajax" || rover_name == "aeneas") // set mode to searcher
+            if ((rover_name == "ajax" || rover_name == "aeneas") && LAWN_MOWER_SEARCH ) // set mode to searcher
             {
                 rover_current_mode = MODE_SEARCHER; // set ajax and aeneas to be the lawnmower path searchers.
                 pose new_goal_location = search_controller.getNextWaypoint(current_location);
