@@ -19,10 +19,20 @@ SearchController::SearchController(std::string rover_name)
         float waypoints_y2 [] = {1.000000, 1.000000, -1.000000, -1.000000, 2.500000, 2.500000, -2.500000, -2.500000, 4.000000, 4.000000, -4.000000, -4.000000, 5.500000, 5.500000, -5.500000, -5.500000, 7.000000, 7.000000, -7.000000, -7.000000, 7.000000};
         float waypoints_x3 [] = {0.000000, 1.500000, 1.500000, -1.500000, -1.500000, 3.000000, 3.000000, -3.000000, -3.000000, 4.500000, 4.500000, -4.500000, -4.500000, 6.000000, 6.000000, -6.000000, -6.000000};
         float waypoints_y3 [] = {1.500000, 1.500000, -1.500000, -1.500000, 3.000000, 3.000000, -3.000000, -3.000000, 4.500000, 4.500000, -4.500000, -4.500000, 6.000000, 6.000000, -6.000000, -6.000000, 7.000000};
-        if (rover_name == "achilles"
+        if (rover_name == "achilles")
         {
             int array_length = sizeof(waypoints_x3)/sizeof(waypoints_x3[0]);
             fillStack(waypoints_x3, waypoints_y3, array_length);
+        }
+        else if (rover_name == "ajax")
+        {
+            int array_length = sizeof(waypoints_x1)/sizeof(waypoints_x1[0]);
+            fillStack(waypoints_x1, waypoints_y1, array_length);
+        }
+        else if (rover_name == "aeneas")
+        {
+            int array_length = sizeof(waypoints_x2)/sizeof(waypoints_x2[0]);
+            fillStack(waypoints_x2, waypoints_y2, array_length);
         }
     }
     else
@@ -35,18 +45,17 @@ SearchController::SearchController(std::string rover_name)
         float waypoints_y1 [] = {0.500000, 0.500000, -0.500000, -0.500000, 1.000000, 1.000000, -1.000000, -1.000000, 1.500000, 1.500000, -1.500000, -1.500000, 2.000000, 2.000000, -2.000000, -2.000000, 2.500000, 2.500000, -2.500000, -2.500000, 3.000000, 3.000000, -3.000000, -3.000000, 3.500000, 3.500000, -3.500000, -3.500000, 4.000000, 4.000000, -4.000000, -4.000000, 4.500000, 4.500000, -4.500000, -4.500000, 5.000000, 5.000000, -5.000000, -5.000000, 5.500000};
         float waypoints_x2 [] = {-5.000000, 5.500000, 5.500000, -5.500000, -5.500000, 6.000000, 6.000000, -6.000000, -6.000000, 6.500000, 6.500000, -6.500000, -6.500000, 7.000000, 7.000000, -7.000000, -7.000000};
         float waypoints_y2 [] = {5.500000, 5.500000, -5.500000, -5.500000, 6.000000, 6.000000, -6.000000, -6.000000, 6.500000, 6.500000, -6.500000, -6.500000, 7.000000, 7.000000, -7.000000, -7.000000, 7.000000};
+        if (rover_name == "ajax")
+        {
+            int array_length = sizeof(waypoints_x1)/sizeof(waypoints_x1[0]);
+            fillStack(waypoints_x1, waypoints_y1, array_length);
+        }
+        else if (rover_name == "aeneas")
+        {
+            int array_length = sizeof(waypoints_x2)/sizeof(waypoints_x2[0]);
+            fillStack(waypoints_x2, waypoints_y2, array_length);
+        }
     }
-    
-    if (rover_name == "ajax")
-    {
-        int array_length = sizeof(waypoints_x1)/sizeof(waypoints_x1[0]);
-        fillStack(waypoints_x1, waypoints_y1, array_length);
-    }
-    else if (rover_name == "aeneas")
-    {
-        int array_length = sizeof(waypoints_x2)/sizeof(waypoints_x2[0]);
-        fillStack(waypoints_x2, waypoints_y2, array_length);
-    }             
 }
 
 void SearchController::fillStack(float waypoints_x [], float waypoints_y [], int array_length)
